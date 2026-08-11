@@ -43,6 +43,29 @@ An independent judge scores task correctness, scenario compliance, skill complia
 
 ## Run
 
+### Script parameters
+
+| Parameter | Default | Behavior |
+| --- | --- | --- |
+| `--agent {codex,claude}` | `codex` | Selects workers and judges for every arm. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. |
+| `--samples N` | `10` | Sets samples per arm and selected scenario. |
+| `--jobs N` | `15` | Sets concurrent cells. Balanced three-arm waves require a positive multiple of three. |
+| `--scenario ID` | all 5 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
+| `--results-file PATH` | `tests/eval/results/iwe-context-routing-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
+| `--list` | disabled | Prints the selected matrix without worker or judge calls. |
+
+This wrapper has no `--repository` option. It reads the external skills checkout from `harness.skills_repository` in `config.toml`; set `IWE_SKILLS_REPOSITORY=/path/to/skills` to override that checkout for one invocation.
+
+Examples:
+
+```bash
+# Full three-arm evaluation with Claude workers and judges.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_context_routing_ab.py --agent claude
+
+# One-sample, one-scenario Codex smoke run; three jobs preserve arm balance.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_context_routing_ab.py --samples 1 --jobs 3 --scenario fallback-after-listed-iwe-miss
+```
+
 ```bash
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_context_routing_ab.py --list
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_context_routing_ab.py

@@ -96,6 +96,21 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 for section in required_sections:
                     self.assertIn(section, text)
+                for parameter in (
+                    "--agent {codex,claude}",
+                    "--samples N",
+                    "--jobs N",
+                    "--scenario ID",
+                    "--results-file PATH",
+                    "--list",
+                ):
+                    self.assertIn(f"`{parameter}`", text)
+                self.assertIn("--agent claude", text)
+                if relative.endswith((
+                    "default-skill-correctness-efficiency.md",
+                    "skill-guidance-efficiency-ab.md",
+                )):
+                    self.assertIn("`--repository URL_OR_PATH`", text)
                 self.assertTrue("## Target" in text or "## Arms" in text)
                 for scenario_id in scenario_ids:
                     self.assertIn(f"`{scenario_id}`", text)

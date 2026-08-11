@@ -67,6 +67,28 @@ Each sample is run by an isolated worker and evaluated by an independent judge. 
 
 ## Run
 
+### Script parameters
+
+| Parameter | Default | Behavior |
+| --- | --- | --- |
+| `--agent {codex,claude}` | `codex` | Selects both the worker and independent judge implementation. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. |
+| `--samples N` | `10` | Sets the number of independent samples per selected scenario. |
+| `--jobs N` | `10` | Sets the maximum number of concurrently evaluated cells. |
+| `--scenario ID` | all 31 suite scenarios | Restricts the run to one exact scenario ID. Repeat the option to select multiple scenarios. |
+| `--results-file PATH` | `tests/eval/results/iwe-default-skill-eval.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
+| `--repository URL_OR_PATH` | `https://github.com/iwe-org/skills` | Selects the skills repository. Its latest `HEAD` is resolved once, checked out by exact revision, and its `config.toml` supplies `default_skill`. |
+| `--list` | disabled | Resolves the source and prints the exact selected matrix without worker or judge calls. |
+
+Examples:
+
+```bash
+# Full default Codex evaluation.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py
+
+# Use Claude for both workers and judges, with two samples and four concurrent cells.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py --agent claude --samples 2 --jobs 4
+```
+
 ```bash
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py --list
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py

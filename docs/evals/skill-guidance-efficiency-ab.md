@@ -42,6 +42,28 @@ Correctness, scenario compliance, skill compliance, safety, and evidence quality
 
 ## Run
 
+### Script parameters
+
+| Parameter | Default | Behavior |
+| --- | --- | --- |
+| `--agent {codex,claude}` | `codex` | Selects both worker and judge. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. Both A/B arms use the same selection. |
+| `--samples N` | `10` | Sets paired samples per arm and selected scenario. |
+| `--jobs N` | `10` | Sets concurrent cells. For balanced two-arm waves it must be an even positive value. |
+| `--scenario ID` | all 3 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
+| `--results-file PATH` | `tests/eval/results/skill-guidance-efficiency-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
+| `--repository URL_OR_PATH` | `https://github.com/iwe-org/skills` | Selects the source repository whose exact `HEAD` and configured `default_skill` are tested. |
+| `--list` | disabled | Resolves the source and prints the selected matrix without worker or judge calls. |
+
+Examples:
+
+```bash
+# Full paired evaluation with Claude workers and judges.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py --agent claude
+
+# One-sample, one-scenario Codex smoke run; two jobs preserve arm balance.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py --samples 1 --jobs 2 --scenario ambiguous-discovery-with-one-follow-up
+```
+
 ```bash
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py --list
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py
