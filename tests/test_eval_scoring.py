@@ -597,6 +597,27 @@ class EvalScoringContractTests(unittest.TestCase):
         self.assertEqual(metrics["iwe_telemetry_invalid"], 0)
         self.assertEqual(metrics["task_tool_output_bytes"], len(stdout.encode()))
 
+    def test_eval_logs_are_workspace_writable_but_excluded_from_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            environment = self.runner.eval_environment(
+                root / "home",
+                root / "codex-home",
+                root / "shims",
+                root / "runtime/iwe",
+                root,
+                workspace=workspace,
+            )
+            telemetry = Path(environment["IWE_EVAL_IWE_LOG"])
+            blocked = Path(environment["IWE_EVAL_BLOCK_LOG"])
+            self.assertTrue(telemetry.is_relative_to(workspace))
+            self.assertTrue(blocked.is_relative_to(workspace))
+            telemetry.write_text("{}\n", encoding="utf-8")
+            blocked.write_text("rg\n", encoding="utf-8")
+            self.assertEqual(self.runner.snapshot(workspace), {})
+
     def test_verdict_keeps_judge_efficiency_scores_without_count_based_clamping(self) -> None:
         critique = {"dimensions": {name: {"score": 5} for name in self.runner.DIMENSIONS}}
         result = self.runner.verdict(self.scenario, critique, [], True)

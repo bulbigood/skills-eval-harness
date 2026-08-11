@@ -443,6 +443,7 @@ def eval_environment(
     iwe_binary: Path,
     temporary: Path,
     agent_implementation: str = "codex",
+    workspace: Path | None = None,
 ) -> dict[str, str]:
     env = {key: os.environ[key] for key in SAFE_HOST_ENV if key in os.environ}
     task_path = f"{shim_bin}:{iwe_binary.parent}:" + os.environ.get("PATH", "")
@@ -452,13 +453,15 @@ def eval_environment(
         f"export PATH={shlex.quote(task_path)}\n",
         encoding="utf-8",
     )
+    log_root = (workspace or temporary) / ".iwe-eval-harness"
+    log_root.mkdir(parents=True, exist_ok=True)
     env.update({
         "HOME": str(isolated_home),
         "CODEX_HOME": str(codex_home),
         "PATH": task_path,
         "BASH_ENV": str(shell_environment),
-        "IWE_EVAL_BLOCK_LOG": str(temporary / "blocked-tools.log"),
-        "IWE_EVAL_IWE_LOG": str(temporary / "iwe-telemetry.jsonl"),
+        "IWE_EVAL_BLOCK_LOG": str(log_root / "blocked-tools.log"),
+        "IWE_EVAL_IWE_LOG": str(log_root / "iwe-telemetry.jsonl"),
     })
     if agent_implementation == "claude":
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -1059,6 +1062,7 @@ def snapshot(root: Path) -> dict[str, str]:
             not path.is_file()
             or ".git" in path.parts
             or ".agents" in path.parts
+            or ".iwe-eval-harness" in path.parts
             or path.name == "AGENTS.md"
             or "__pycache__" in path.parts
             or path.suffix == ".pyc"
@@ -2952,7 +2956,13 @@ def main() -> int:
         host_auth = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
         if host_auth.exists(): shutil.copy2(host_auth, codex_home / "auth.json")
         env = eval_environment(
-            isolated_home, codex_home, shim_bin, local_iwe_binary, temporary, args.agent
+            isolated_home,
+            codex_home,
+            shim_bin,
+            local_iwe_binary,
+            temporary,
+            args.agent,
+            workspace=workspace,
         )
         prompt = agent_prompt(
             scenario,
@@ -2966,7 +2976,7 @@ def main() -> int:
         if worker_end_barrier is not None:
             worker_end_barrier.wait()
         agent["wave_id"] = worker_wave_id
-        telemetry = load_iwe_telemetry(temporary / "iwe-telemetry.jsonl")
+        telemetry = load_iwe_telemetry(Path(env["IWE_EVAL_IWE_LOG"]))
         agent["iwe_telemetry"] = telemetry
         agent["metrics"] = command_metrics(
             agent["commands"], telemetry,
