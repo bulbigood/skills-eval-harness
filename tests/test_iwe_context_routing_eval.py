@@ -65,12 +65,15 @@ class IweContextRoutingEvalTests(unittest.TestCase):
         )
         self.assertEqual(module.SCENARIOS, SCENARIO_IDS)
         self.assertEqual(module.DEFAULT_SAMPLES, 10)
-        self.assertEqual(module.DEFAULT_JOBS, 15)
+        concurrency = load_module(
+            ROOT / "scripts/eval_concurrency.py", "context_eval_concurrency"
+        )
+        self.assertEqual(module.DEFAULT_JOBS, concurrency.DEFAULT_JOBS)
         with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
             manifest_path = module.write_experiment(root=ROOT)
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["samples"], 10)
-        self.assertEqual(manifest["jobs"], 15)
+        self.assertEqual(manifest["jobs"], module.DEFAULT_JOBS)
         self.assertEqual(manifest["guidance_accounting"], "include_activation")
         self.assertEqual(manifest["skill_activation"], "optional")
         self.assertEqual(manifest["worker_scheduling"], "balanced_waves")
@@ -97,16 +100,27 @@ class IweContextRoutingEvalTests(unittest.TestCase):
             if scenario.id in experiment.scenario_ids
         ]
         cells = runner.build_matrix(experiment, scenarios)
-        waves = runner.worker_waves(cells, experiment.jobs, len(experiment.targets))
+        effective_jobs = runner.normalize_jobs(
+            experiment.jobs, target_count=len(experiment.targets), balanced=True
+        )
+        waves = runner.worker_waves(cells, effective_jobs, len(experiment.targets))
         self.assertEqual(len(cells), 150)
-        self.assertEqual(len(waves), 10)
+        self.assertGreaterEqual(effective_jobs, len(experiment.targets))
+        self.assertLessEqual(effective_jobs, 20)
+        self.assertEqual(effective_jobs % len(experiment.targets), 0)
+        self.assertEqual(sum(map(len, waves)), len(cells))
         for wave in waves:
-            self.assertEqual(len(wave), 15)
+            self.assertLessEqual(len(wave), effective_jobs)
+            per_target = len(wave) // len(experiment.targets)
             self.assertEqual(
                 {target: [cell.target_id for cell in wave].count(target) for target in (
                     "iwe-cli-only", "iwe-v18", "iwe-v18-agents",
                 )},
-                {"iwe-cli-only": 5, "iwe-v18": 5, "iwe-v18-agents": 5},
+                {
+                    "iwe-cli-only": per_target,
+                    "iwe-v18": per_target,
+                    "iwe-v18-agents": per_target,
+                },
             )
 
     def test_smoke_can_select_one_scenario(self) -> None:
