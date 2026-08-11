@@ -90,7 +90,99 @@ class EvalScoringContractTests(unittest.TestCase):
         self.assertEqual(result["exit"], 124)
         self.assertIn("turn.started", result["stdout"])
         self.assertIn("timed out", result["stderr"])
+
+    def test_run_process_retries_capacity_failure_before_any_tool_call(self) -> None:
+        capacity = subprocess.CompletedProcess(
+            ["agent"],
+            1,
+            stdout="\n".join([
+                json.dumps({
+                    "type": "error",
+                    "message": "Selected model is at capacity. Please try a different model.",
+                }),
+                json.dumps({
+                    "type": "turn.failed",
+                    "error": {"message": "Selected model is at capacity. Please try a different model."},
+                }),
+            ]),
+            stderr="",
+        )
+        success = subprocess.CompletedProcess(
+            ["agent"],
+            0,
+            stdout=json.dumps({
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "done"},
+            }),
+            stderr="",
+        )
+        with (
+            mock.patch.object(self.runner.subprocess, "run", side_effect=[capacity, success]) as run,
+            mock.patch.object(self.runner.time, "sleep") as sleep,
+        ):
+            result = self.runner.run_process("agent", "prompt", ROOT, 30, {})
+
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once()
+        self.assertEqual(result["exit"], 0)
+        self.assertEqual(result["final"], "done")
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(len(result["transient_failures"]), 1)
         self.assertEqual(result["commands"], [])
+
+    def test_run_process_does_not_retry_capacity_failure_after_tool_execution(self) -> None:
+        capacity_after_tool = subprocess.CompletedProcess(
+            ["agent"],
+            1,
+            stdout="\n".join([
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "command": "iwe retrieve --key note --limit 1",
+                        "exit_code": 0,
+                        "aggregated_output": "body",
+                    },
+                }),
+                json.dumps({
+                    "type": "turn.failed",
+                    "error": {"message": "Selected model is at capacity. Please try a different model."},
+                }),
+            ]),
+            stderr="",
+        )
+        with mock.patch.object(
+            self.runner.subprocess, "run", return_value=capacity_after_tool,
+        ) as run:
+            result = self.runner.run_process("agent", "prompt", ROOT, 30, {})
+
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(result["exit"], 1)
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(result["transient_failures"], [])
+        self.assertEqual(len(result["commands"]), 1)
+
+    def test_run_process_bounds_repeated_capacity_failures(self) -> None:
+        capacity = subprocess.CompletedProcess(
+            ["agent"],
+            1,
+            stdout=json.dumps({
+                "type": "turn.failed",
+                "error": {"message": "Selected model is at capacity. Please try a different model."},
+            }),
+            stderr="",
+        )
+        with (
+            mock.patch.object(self.runner.subprocess, "run", return_value=capacity) as run,
+            mock.patch.object(self.runner.time, "sleep") as sleep,
+        ):
+            result = self.runner.run_process("agent", "prompt", ROOT, 30, {})
+
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+        self.assertEqual(result["exit"], 1)
+        self.assertEqual(result["attempts"], 4)
+        self.assertEqual(len(result["transient_failures"]), 3)
 
     def test_agent_event_parsing_captures_provider_token_usage(self) -> None:
         codex = self.runner.parse_process_output(

@@ -80,3 +80,7 @@ The release gate fails. The result identifies two separate next steps:
 - independently reduce guidance/retrieval context and tool overhead before treating efficiency as acceptable.
 
 Until a rerun reaches the suite's validity requirements without provider-capacity contamination, this report should be treated as a diagnostic fail-closed run rather than the canonical quality baseline.
+
+### Follow-up
+
+Bounded process retry was implemented after this run. It retries recognized transient provider-capacity failures only before any tool execution, makes at most four attempts with bounded backoff, and preserves fail-closed behavior after tool execution. A five-sample parallel smoke run then completed with 5/5 valid samples and a passing aggregate. This historical 310-cell result is intentionally unchanged; a new full frozen-matrix run is still required before replacing it as the quality baseline.

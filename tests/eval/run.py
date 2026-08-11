@@ -1951,36 +1951,75 @@ def performance_summary(results: list[dict], target_ids: tuple[str, ...]) -> dic
     return summary
 
 
+TRANSIENT_PROVIDER_MESSAGES = (
+    "selected model is at capacity",
+    "service temporarily unavailable",
+    "server is temporarily overloaded",
+)
+TRANSIENT_PROCESS_ATTEMPTS = 4
+TRANSIENT_RETRY_DELAYS_SECONDS = (2, 4, 8)
+
+
+def transient_provider_failure(result: dict) -> str | None:
+    """Return a recognized transient message only before any tool execution."""
+    if result["exit"] == 0 or result.get("commands"):
+        return None
+    output = f"{result.get('stdout', '')}\n{result.get('stderr', '')}".casefold()
+    return next((message for message in TRANSIENT_PROVIDER_MESSAGES if message in output), None)
+
+
 def run_process(command: str, prompt: str, cwd: Path, timeout: int, env: dict[str, str]) -> dict:
     started = time.monotonic()
     argv = process_argv(command, cwd)
-    try:
-        completed = subprocess.run(
-            argv,
-            input=prompt,
-            cwd=cwd,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        def captured_text(value: str | bytes | None) -> str:
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="replace")
-            return value or ""
+    transient_failures: list[dict[str, object]] = []
+    for attempt in range(1, TRANSIENT_PROCESS_ATTEMPTS + 1):
+        attempt_started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                argv,
+                input=prompt,
+                cwd=cwd,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            def captured_text(value: str | bytes | None) -> str:
+                if isinstance(value, bytes):
+                    return value.decode("utf-8", errors="replace")
+                return value or ""
 
-        stderr = captured_text(error.stderr)
-        timeout_message = f"process timed out after {timeout} seconds"
-        completed = subprocess.CompletedProcess(
-            argv,
-            124,
-            stdout=captured_text(error.stdout),
-            stderr=f"{stderr}\n{timeout_message}".strip(),
-        )
-    parsed = parse_process_output(Path(argv[0]).name, completed.stdout)
-    return {"exit": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr, **parsed, "wall_seconds": time.monotonic() - started}
+            stderr = captured_text(error.stderr)
+            timeout_message = f"process timed out after {timeout} seconds"
+            completed = subprocess.CompletedProcess(
+                argv,
+                124,
+                stdout=captured_text(error.stdout),
+                stderr=f"{stderr}\n{timeout_message}".strip(),
+            )
+        parsed = parse_process_output(Path(argv[0]).name, completed.stdout)
+        result = {
+            "exit": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            **parsed,
+            "wall_seconds": time.monotonic() - attempt_started,
+        }
+        transient_message = transient_provider_failure(result)
+        if transient_message is None or attempt == TRANSIENT_PROCESS_ATTEMPTS:
+            result["wall_seconds"] = time.monotonic() - started
+            result["attempts"] = attempt
+            result["transient_failures"] = transient_failures
+            return result
+        transient_failures.append({
+            "attempt": attempt,
+            "exit": completed.returncode,
+            "message": transient_message,
+        })
+        time.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt - 1])
+    raise AssertionError("unreachable transient retry state")
 
 
 def mechanical_errors(

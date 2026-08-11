@@ -24,6 +24,8 @@ The number of samples with trustworthy execution and result integrity. A valid s
 
 Invalidity is reserved for failures that make the result itself untrustworthy. It is not used for ordinary tool-procedure or efficiency mistakes.
 
+Recognized transient provider-capacity failures are retried at the process boundary only when no tool execution has occurred. The runner makes at most four attempts with `2`, `4`, and `8` second backoff delays and records the attempt count and prior transient failures in the raw sample report. A failure after any tool execution is never retried, because repeating a partially completed mutation could change the evaluated task. Unrecognized failures, timeouts, exhausted retries, and ordinary model-quality failures remain fail-closed.
+
 ### Procedure-clean
 
 The number of samples with no deterministic tool-procedure errors. Examples include deprecated or unbounded commands, telemetry conflicts, forbidden fallback, and output truncation.
