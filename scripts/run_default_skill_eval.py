@@ -82,6 +82,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=UPSTREAM_REPOSITORY,
         help=f"skills repository whose latest HEAD is evaluated (default: {UPSTREAM_REPOSITORY})",
     )
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        dest="scenarios",
+        help="scenario ID to run; repeat to select multiple scenarios",
+    )
     parser.add_argument("--list", action="store_true", help="list the matrix without model calls")
     return parser.parse_args(argv)
 
@@ -114,6 +120,7 @@ def write_experiment(
     source_root: Path | None = None,
     source_revision: str | None = None,
     source_repository: str = UPSTREAM_REPOSITORY,
+    scenarios: tuple[str, ...] | None = None,
 ) -> Path:
     if source_root is None:
         checkout = materialize_upstream_checkout(root, source_repository)
@@ -124,7 +131,11 @@ def write_experiment(
         raise ValueError(f"skill source must be inside the evaluation repository: {source_root}")
     default_skill, skills = load_skills(source_root)
     targets = load_targets(source_root)
-    scenario_ids = load_scenario_ids(root)
+    available_scenarios = load_scenario_ids(root)
+    scenario_ids = scenarios or available_scenarios
+    unknown = set(scenario_ids) - set(available_scenarios)
+    if unknown:
+        raise ValueError(f"unknown default-skill scenarios: {sorted(unknown)}")
     cache = (root / CACHE).resolve()
     lines = [
         f"# source_repository = {json.dumps(source_repository)}",
@@ -210,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         source_root=checkout.root,
         source_revision=checkout.revision,
         source_repository=args.repository,
+        scenarios=tuple(args.scenarios) if args.scenarios else None,
     )
     return subprocess.call(
         build_command(manifest, args.results_file, args.agent, list_only=args.list),

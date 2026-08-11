@@ -89,6 +89,46 @@ class IweContextRoutingEvalTests(unittest.TestCase):
             manifest["targets"][2]["agents_file"],
             str(TEMPLATE.relative_to(ROOT)),
         )
+        experiment_module = load_module(ROOT / "tests/eval/experiment.py", "experiment")
+        experiment = experiment_module.load_experiment(manifest_path, ROOT)
+        runner = load_module(ROOT / "tests/eval/run.py", "run_context_routing_scheduler")
+        scenarios = [
+            scenario for scenario in runner.load_scenarios()
+            if scenario.id in experiment.scenario_ids
+        ]
+        cells = runner.build_matrix(experiment, scenarios)
+        waves = runner.worker_waves(cells, experiment.jobs, len(experiment.targets))
+        self.assertEqual(len(cells), 150)
+        self.assertEqual(len(waves), 10)
+        for wave in waves:
+            self.assertEqual(len(wave), 15)
+            self.assertEqual(
+                {target: [cell.target_id for cell in wave].count(target) for target in (
+                    "iwe-cli-only", "iwe-v18", "iwe-v18-agents",
+                )},
+                {"iwe-cli-only": 5, "iwe-v18": 5, "iwe-v18-agents": 5},
+            )
+
+    def test_smoke_can_select_one_scenario(self) -> None:
+        module = load_module(
+            ROOT / "scripts/run_iwe_context_routing_ab.py",
+            "run_iwe_context_routing_smoke",
+        )
+        args = module.parse_args([
+            "--samples", "1",
+            "--scenario", "fallback-when-iwe-is-unavailable",
+        ])
+        self.assertEqual(args.samples, 1)
+        self.assertEqual(args.scenarios, ["fallback-when-iwe-is-unavailable"])
+        with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
+            manifest_path = module.write_experiment(
+                root=ROOT,
+                samples=1,
+                scenarios=("fallback-when-iwe-is-unavailable",),
+            )
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["samples"], 1)
+        self.assertEqual(manifest["scenarios"], ["fallback-when-iwe-is-unavailable"])
 
     def test_agents_template_has_only_declared_placeholders(self) -> None:
         text = TEMPLATE.read_text(encoding="utf-8")
@@ -233,6 +273,18 @@ class IweContextRoutingEvalTests(unittest.TestCase):
             runner.command_metrics([]),
         )
         self.assertIn("task_correctness", failures)
+        self.assertTrue(runner._is_english_audit_retention_decision(
+            "# Audit Log Retention Decision\n\nAudit logs are stored for 90 days.\n"
+        ))
+        self.assertTrue(runner._is_english_audit_retention_decision(
+            "# Audit Retention Decision\n\nRetain audit records for 90 days.\n"
+        ))
+        self.assertFalse(runner._is_english_audit_retention_decision(
+            "# Решение о хранении аудита\n\nЖурналы аудита хранятся 90 дней.\n"
+        ))
+        self.assertFalse(runner._is_english_audit_retention_decision(
+            "# Audit Policy\n\nAudit logs are stored indefinitely.\n"
+        ))
 
 
 if __name__ == "__main__":

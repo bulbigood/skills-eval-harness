@@ -47,6 +47,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--samples", type=positive_int, default=DEFAULT_SAMPLES)
     parser.add_argument("--results-file", type=Path, default=DEFAULT_RESULTS_FILE)
     parser.add_argument("--agent", choices=("codex", "claude"), default="codex")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        dest="scenarios",
+        help="scenario ID to run; repeat to select multiple scenarios",
+    )
     parser.add_argument("--list", action="store_true")
     return parser.parse_args(argv)
 
@@ -57,6 +63,7 @@ def write_experiment(
     jobs: int = DEFAULT_JOBS,
     samples: int = DEFAULT_SAMPLES,
     agent: str = "codex",
+    scenarios: tuple[str, ...] | None = None,
 ) -> Path:
     _, skills = load_skills(root)
     current = skills[CURRENT_SKILL]
@@ -81,11 +88,15 @@ def write_experiment(
         f"skill_path = {json.dumps(os.path.relpath(current.path, root))}",
         f"skill_version = {json.dumps(current.skill_version)}",
     ]
+    scenario_ids = scenarios or SCENARIOS
+    unknown = set(scenario_ids) - set(SCENARIOS)
+    if unknown:
+        raise ValueError(f"unknown context-routing scenarios: {sorted(unknown)}")
     lines = [
         "schema_version = 1",
         'name = "iwe-context-routing-ab"',
         f"agent_judge_config = {json.dumps(agent)}",
-        f"scenarios = {json.dumps(SCENARIOS)}",
+        f"scenarios = {json.dumps(scenario_ids)}",
         f"comparison_metrics = {json.dumps(COMPARISON_METRICS)}",
         'guidance_accounting = "include_activation"',
         'skill_activation = "optional"',
@@ -145,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs=args.jobs,
         samples=args.samples,
         agent=args.agent,
+        scenarios=tuple(args.scenarios) if args.scenarios else None,
     )
     return subprocess.call(
         build_command(manifest, args.results_file, args.agent, list_only=args.list),

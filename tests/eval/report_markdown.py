@@ -250,8 +250,39 @@ def _performance_table(performance: dict[str, dict]) -> list[str]:
                 )
         lines.extend([f"| Samples included | Count | {target['samples']} |", ""])
         return lines
-    if len(performance) != 2:
-        raise ValueError("performance reporting supports one or two arms")
+    if len(performance) > 2:
+        target_ids = tuple(performance)
+        lines = [
+            "## Worker performance summary",
+            "",
+            "Median and mean use every worker sample across all selected scenarios. Token counts are provider-reported.",
+            "",
+            "| Metric | Statistic | " + " | ".join(target_ids) + " |",
+            "| --- | --- | " + " | ".join("---:" for _ in target_ids) + " |",
+        ]
+        rows = (
+            ("Input tokens", "input_tokens_median", False),
+            ("Output tokens", "output_tokens_median", False),
+            ("Tool calls", "tool_calls_median", False),
+            ("Wall time (seconds)", "wall_seconds_median", True),
+        )
+        for label, median_key, seconds in rows:
+            for statistic, key in (
+                ("Median", median_key),
+                ("Mean", median_key.replace("_median", "_mean")),
+            ):
+                values = [
+                    _median_cell(performance[target_id][key], seconds=seconds)
+                    for target_id in target_ids
+                ]
+                lines.append(f"| {label} | {statistic} | " + " | ".join(values) + " |")
+        lines.append(
+            "| Samples included | Count | "
+            + " | ".join(str(performance[target_id]["samples"]) for target_id in target_ids)
+            + " |"
+        )
+        lines.append("")
+        return lines
     baseline_id, comparison_id = performance
     baseline = performance[baseline_id]
     comparison = performance[comparison_id]

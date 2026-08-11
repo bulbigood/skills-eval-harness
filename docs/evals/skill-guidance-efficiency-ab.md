@@ -47,6 +47,8 @@ uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py
 ```
 
+Use `--samples 1` for a bounded six-cell smoke run; repeat `--scenario` to select a subset when diagnosing one route.
+
 A new Markdown report defaults to `tests/eval/results/skill-guidance-efficiency-ab.md`. Generated results are intentionally untracked.
 
 ## Matrix and model cost

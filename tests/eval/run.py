@@ -130,21 +130,29 @@ def build_matrix(experiment, scenarios) -> list[MatrixCell]:
 
 
 def balanced_waves(cells: list[MatrixCell], jobs: int) -> list[list[MatrixCell]]:
-    """Group complete A/B pairs into equal-arm waves with counterbalanced order."""
-    if jobs < 2 or jobs % 2:
-        raise ValueError("balanced_waves requires an even jobs value of at least 2")
-    pairs: list[list[MatrixCell]] = []
-    for offset in range(0, len(cells), 2):
-        pair = cells[offset : offset + 2]
-        if len(pair) != 2 or pair[0].pair_id != pair[1].pair_id:
-            raise ValueError("balanced_waves requires adjacent complete two-target pairs")
-        if pair[0].sample_index % 2 == 0:
-            pair = list(reversed(pair))
-        pairs.append(pair)
-    pairs_per_wave = jobs // 2
+    """Group complete comparison sets into equal-arm counterbalanced waves."""
+    if not cells:
+        return []
+    first_pair_id = cells[0].pair_id
+    target_count = next(
+        (index for index, cell in enumerate(cells) if cell.pair_id != first_pair_id),
+        len(cells),
+    )
+    if target_count < 2 or jobs < target_count or jobs % target_count:
+        raise ValueError(
+            "balanced_waves requires jobs to be a positive multiple of the target count"
+        )
+    groups: list[list[MatrixCell]] = []
+    for offset in range(0, len(cells), target_count):
+        group = cells[offset : offset + target_count]
+        if len(group) != target_count or len({cell.pair_id for cell in group}) != 1:
+            raise ValueError("balanced_waves requires adjacent complete target groups")
+        rotation = (group[0].sample_index - 1) % target_count
+        groups.append(group[rotation:] + group[:rotation])
+    groups_per_wave = jobs // target_count
     waves = [
-        [cell for pair in pairs[offset : offset + pairs_per_wave] for cell in pair]
-        for offset in range(0, len(pairs), pairs_per_wave)
+        [cell for group in groups[offset : offset + groups_per_wave] for cell in group]
+        for offset in range(0, len(groups), groups_per_wave)
     ]
     if any(len(wave) != jobs for wave in waves):
         raise ValueError("balanced_waves requires complete waves")
@@ -154,14 +162,14 @@ def balanced_waves(cells: list[MatrixCell], jobs: int) -> list[list[MatrixCell]]
 def worker_waves(
     cells: list[MatrixCell], jobs: int, target_count: int
 ) -> list[list[MatrixCell]]:
-    """Schedule single-arm chunks or preserve counterbalanced two-arm waves."""
+    """Schedule single-arm chunks or preserve counterbalanced comparison waves."""
     if target_count == 1:
         if jobs < 1:
             raise ValueError("single-arm worker waves require at least one job")
         return [cells[offset : offset + jobs] for offset in range(0, len(cells), jobs)]
-    if target_count == 2:
+    if target_count >= 2:
         return balanced_waves(cells, jobs)
-    raise ValueError("balanced worker scheduling supports one or two targets")
+    raise ValueError("worker scheduling requires at least one target")
 
 
 def select_scenarios(scenarios: list["Scenario"], requested_ids: list[str] | None) -> list["Scenario"]:
@@ -1231,6 +1239,17 @@ def independent_schema_validation_evidence(
     }
 
 
+def _is_english_audit_retention_decision(body: str) -> bool:
+    """Recognize the scenario facts without requiring one exact phrasing."""
+    lowered = body.casefold()
+    return (
+        re.search(r"(?m)^#\s+.*\bdecision\b", lowered) is not None
+        and re.search(r"\baudit\b", lowered) is not None
+        and re.search(r"\b90\s+days?\b", lowered) is not None
+        and re.search(r"[А-Яа-яЁё]", body) is None
+    )
+
+
 def independent_oracle_evidence(
     scenario: Scenario,
     before: dict[str, str],
@@ -1418,9 +1437,7 @@ def independent_oracle_evidence(
             "created_paths": sorted(created_documents),
             "valid": (
                 len(bodies) == 1
-                and "Audit Retention Decision" in bodies[0]
-                and "Retain audit records for 90 days." in bodies[0]
-                and not re.search(r"[А-Яа-яЁё]", bodies[0])
+                and _is_english_audit_retention_decision(bodies[0])
             ),
         }
     evidence = {
@@ -2108,9 +2125,7 @@ def mechanical_errors(
         changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
         valid = [
             key for key, body in created.items()
-            if re.search(r"^#\s+Audit Retention Decision\s*$", body, re.MULTILINE)
-            and "Retain audit records for 90 days." in body
-            and not re.search(r"[А-Яа-яЁё]", body)
+            if _is_english_audit_retention_decision(body)
         ]
         if len(valid) != 1 or changed != set(valid):
             errors.append("IWE document was not created once in the declared workspace language")
@@ -2893,7 +2908,16 @@ def main() -> int:
             local_target = skill
             local_skill, target_id, pair_id = skill, "single", None
             local_iwe_binary = runtime_binaries[target_id]
-        temporary = Path(tempfile.mkdtemp(prefix="iwe-agent-eval-"))
+        workspace_root = EVAL / ".cache/workspaces"
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        temporary_context = None
+        if args.keep_workspaces:
+            temporary = Path(tempfile.mkdtemp(prefix="iwe-agent-eval-", dir=workspace_root))
+        else:
+            temporary_context = tempfile.TemporaryDirectory(
+                prefix="iwe-agent-eval-", dir=workspace_root
+            )
+            temporary = Path(temporary_context.name)
         workspace = temporary / "workspace"
         base_name = "seventeen-centuries" if scenario.fixture.startswith("seventeen") else "pkm-demo"
         shutil.copytree(fixtures[scenario.fixture], workspace, ignore=shutil.ignore_patterns(".git"))
@@ -3087,17 +3111,17 @@ def main() -> int:
             result["target_provenance"] = {
                 "skill_mode": "installed" if local_skill is not None else "none",
                 "skill_path": (
-                    str(local_skill_path.relative_to(ROOT)) if local_skill_path is not None else None
+                    os.path.relpath(local_skill_path, ROOT) if local_skill_path is not None else None
                 ),
                 "skill_version": local_skill.skill_version if local_skill is not None else None,
                 "skill_sha256": payload_hash(local_skill_path) if local_skill_path is not None else None,
                 "agents_file": (
-                    str(local_target.agents_file.relative_to(ROOT))
+                    os.path.relpath(local_target.agents_file, ROOT)
                     if local_target.agents_file is not None else None
                 ),
                 "agents_file_provenance": agents_file_provenance(installed_agents_file),
                 "agents_context": scenario.agents_context,
-                "contract_file": str(local_target.contract_file.relative_to(ROOT)),
+                "contract_file": os.path.relpath(local_target.contract_file, ROOT),
                 "contract_sha256": hashlib.sha256(local_target.contract_file.read_bytes()).hexdigest(),
                 "runtime_source": local_target.runtime.source,
                 "runtime_binary": str(local_iwe_binary),
@@ -3112,7 +3136,8 @@ def main() -> int:
         status = "VALID" if result["verdict"]["valid"] else "INVALID"
         suffix = f" metric_failures={failures}" if failures else ""
         print(f"{status} sample {sample} {scenario.name}{suffix}", flush=True)
-        if not args.keep_workspaces: shutil.rmtree(temporary)
+        if temporary_context is not None:
+            temporary_context.cleanup()
         return result
 
     tasks = build_matrix(experiment, scenarios) if experiment else [
@@ -3214,11 +3239,11 @@ def main() -> int:
                  "minimum_score": model_profile.minimum_score,
                  "required_success_percent": model_profile.required_success_percent,
                  "skill_mode": "installed" if target.has_skill else "none",
-                 "skill_path": str(target.path.relative_to(ROOT)) if target.path else None,
+                 "skill_path": os.path.relpath(target.path, ROOT) if target.path else None,
                  "skill_version": target.skill_version,
-                 "agents_file": str(target.agents_file.relative_to(ROOT)) if target.agents_file else None,
+                 "agents_file": os.path.relpath(target.agents_file, ROOT) if target.agents_file else None,
                  "agents_file_provenance": agents_file_provenance(target.agents_file),
-                 "contract_file": str(target.contract_file.relative_to(ROOT)),
+                 "contract_file": os.path.relpath(target.contract_file, ROOT),
                  "runtime": {"cli": target.runtime.cli, "source": target.runtime.source,
                              "directory": str(target.runtime.directory), "version": target.runtime.version}}
                 for target in experiment.targets

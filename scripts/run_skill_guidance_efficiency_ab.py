@@ -44,13 +44,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Compare the latest upstream default skill with a no-skill control."
     )
     parser.add_argument("--jobs", type=positive_int, default=DEFAULT_JOBS)
+    parser.add_argument("--samples", type=positive_int, default=SAMPLES)
     parser.add_argument("--results-file", type=Path, default=DEFAULT_RESULTS_FILE)
     parser.add_argument("--agent", choices=("codex", "claude"), default="codex")
     parser.add_argument("--repository", default=UPSTREAM_REPOSITORY)
     parser.add_argument(
+        "--scenario",
+        action="append",
+        dest="scenarios",
+        help="scenario ID to run; repeat to select multiple scenarios",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
-        help="regenerate and list the exact 60-cell matrix without model calls",
+        help="regenerate and list the selected matrix without model calls",
     )
     return parser.parse_args(argv)
 
@@ -59,10 +66,12 @@ def write_experiment(
     *,
     root: Path = ROOT,
     jobs: int = DEFAULT_JOBS,
+    samples: int = SAMPLES,
     agent: str = "codex",
     source_root: Path | None = None,
     source_revision: str | None = None,
     source_repository: str = UPSTREAM_REPOSITORY,
+    scenarios: tuple[str, ...] | None = None,
 ) -> Path:
     if source_root is None:
         checkout = materialize_upstream_checkout(root, source_repository, SOURCE_CACHE)
@@ -91,6 +100,10 @@ def write_experiment(
         f"version = {json.dumps(current.tested_version)}",
         f"directory = {json.dumps(str(runtime.relative_to(root)))}",
     ]
+    scenario_ids = scenarios or SCENARIOS
+    unknown = set(scenario_ids) - set(SCENARIOS)
+    if unknown:
+        raise ValueError(f"unknown skill-guidance scenarios: {sorted(unknown)}")
     lines = [
         "schema_version = 1",
         f"# source_repository = {json.dumps(source_repository)}",
@@ -98,11 +111,11 @@ def write_experiment(
         f"# default_skill = {json.dumps(default_skill)}",
         'name = "skill-guidance-efficiency-ab"',
         f"agent_judge_config = {json.dumps(agent)}",
-        f"scenarios = {json.dumps(SCENARIOS)}",
+        f"scenarios = {json.dumps(scenario_ids)}",
         f"comparison_metrics = {json.dumps(COMPARISON_METRICS)}",
         'guidance_accounting = "include_activation"',
         'worker_scheduling = "balanced_waves"',
-        f"samples = {SAMPLES}",
+        f"samples = {samples}",
         f"jobs = {jobs}",
         "",
         "[[targets]]",
@@ -154,10 +167,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Evaluating {args.repository} at {checkout.revision}")
     manifest = write_experiment(
         jobs=args.jobs,
+        samples=args.samples,
         agent=args.agent,
         source_root=checkout.root,
         source_revision=checkout.revision,
         source_repository=args.repository,
+        scenarios=tuple(args.scenarios) if args.scenarios else None,
     )
     return subprocess.call(
         build_command(

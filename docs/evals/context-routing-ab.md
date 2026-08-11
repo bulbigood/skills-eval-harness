@@ -48,6 +48,8 @@ uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_co
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_iwe_context_routing_ab.py
 ```
 
+Use `--samples 1` for a bounded 15-cell smoke run; repeat `--scenario` to isolate one routing contract.
+
 The Markdown report defaults to `tests/eval/results/iwe-context-routing-ab.md`.
 
 ## Matrix and model cost

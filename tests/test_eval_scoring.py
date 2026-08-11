@@ -1941,6 +1941,12 @@ version = "0.18.0"
         )
         self.assertIn("| Metric | Statistic | guided |", single_arm_markdown)
         self.assertIn("| Input tokens | Median | 200 |", single_arm_markdown)
+
+        three_arm = {"cli": summary["guided"], "skill": summary["control"], "policy": summary["guided"]}
+        three_arm_markdown = "\n".join(renderer._performance_table(three_arm))
+        self.assertIn("| Metric | Statistic | cli | skill | policy |", three_arm_markdown)
+        self.assertIn("| Input tokens | Median | 200 | 800 | 200 |", three_arm_markdown)
+        self.assertIn("| Samples included | Count | 3 | 3 | 3 |", three_arm_markdown)
         self.assertIn("| Samples included | Count | 3 |", single_arm_markdown)
         self.assertNotIn("Change is", single_arm_markdown)
 
@@ -2691,6 +2697,10 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(module.parse_args([]).jobs, 10)
         self.assertEqual(module.parse_args(["--samples", "2"]).samples, 2)
         self.assertEqual(module.parse_args(["--jobs", "4"]).jobs, 4)
+        self.assertEqual(
+            module.parse_args(["--scenario", "read-one-known-note", "--scenario", "count-a-typed-cohort"]).scenarios,
+            ["read-one-known-note", "count-a-typed-cohort"],
+        )
         self.assertTrue(module.parse_args(["--list"]).list)
         self.assertIn(
             "--list",
@@ -2700,6 +2710,28 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             module.parse_args(["--samples", "0"])
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             module.parse_args(["--jobs", "0"])
+
+    def test_guidance_smoke_can_bound_samples_and_scenarios(self) -> None:
+        module = load_module(
+            ROOT / "scripts/run_skill_guidance_efficiency_ab.py",
+            "run_skill_guidance_smoke_args",
+        )
+        args = module.parse_args([
+            "--samples", "1",
+            "--scenario", "ambiguous-discovery-with-one-follow-up",
+        ])
+        self.assertEqual(args.samples, 1)
+        self.assertEqual(args.scenarios, ["ambiguous-discovery-with-one-follow-up"])
+        with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
+            manifest_path = module.write_experiment(
+                root=ROOT,
+                samples=1,
+                source_root=ROOT,
+                scenarios=("ambiguous-discovery-with-one-follow-up",),
+            )
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["samples"], 1)
+        self.assertEqual(manifest["scenarios"], ["ambiguous-discovery-with-one-follow-up"])
 
     def test_single_skill_evals_default_to_ten_jobs_and_one_sample(self) -> None:
         config = json.loads(

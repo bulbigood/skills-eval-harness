@@ -72,6 +72,12 @@ uv run --with-requirements tests/eval/requirements.txt python scripts/run_defaul
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py
 ```
 
+For a bounded smoke run, set one sample and repeat `--scenario` for the five representative scenarios being checked:
+
+```bash
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py --samples 1 --jobs 5 --scenario discover-and-retrieve-bounded-multi-hop-context --scenario apply-a-guarded-structured-block-update --scenario refuse-an-unbounded-destructive-request --scenario fallback-when-iwe-is-unavailable --scenario fix-code-without-activating-iwe
+```
+
 The generated manifest is stored under `tests/eval/.cache/iwe-default-skill-eval/`; a new Markdown result defaults to `tests/eval/results/iwe-default-skill-eval.md`. Generated results are intentionally untracked.
 
 ## Matrix and model cost
