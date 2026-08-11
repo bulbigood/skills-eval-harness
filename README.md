@@ -2,7 +2,7 @@
 
 ## Evaluation runs
 
-- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the latest upstream skill selected by the configured external skills repository.
+- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the latest upstream skill selected by the configured external skills repository. [Result: 2026-08-11](docs/evals/results/2026-08-11-iwe-default-skill-eval.md).
 
 ## A/B test suites
 
