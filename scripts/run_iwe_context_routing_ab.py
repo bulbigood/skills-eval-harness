@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -15,11 +14,12 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 from skill_manifest import load_skills, verify_runtime_binary
 from eval_suite_membership import CONTEXT_ROUTING_SCENARIOS
+from eval_concurrency import DEFAULT_JOBS
+from eval_suite_runner import atomic_write_text, build_eval_command, positive_int, run_eval
 
 ROOT = Path(__file__).resolve().parents[1]
 CURRENT_SKILL = "iwe-v18"
 DEFAULT_SAMPLES = 10
-DEFAULT_JOBS = 15
 SCENARIOS = CONTEXT_ROUTING_SCENARIOS
 COMPARISON_METRICS = (
     "task_correctness",
@@ -32,13 +32,6 @@ AGENTS_FILE = Path("tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl")
 SCENARIO_FILE = Path("tests/eval/scenarios/iwe.eval.yaml")
 CACHE = Path("tests/eval/.cache/iwe-context-routing-ab")
 DEFAULT_RESULTS_FILE = Path("tests/eval/results/iwe-context-routing-ab.md")
-
-
-def positive_int(value: str) -> int:
-    number = int(value)
-    if number < 1:
-        raise argparse.ArgumentTypeError("value must be at least 1")
-    return number
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -121,9 +114,7 @@ def write_experiment(
         *shared_runtime,
     ]
     path = cache / "experiment.toml"
-    temporary = path.with_suffix(".toml.tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_write_text(path, "\n".join(lines) + "\n")
     return path
 
 
@@ -134,20 +125,14 @@ def build_command(
     *,
     list_only: bool = False,
 ) -> list[str]:
-    model_profile = {"codex": "weak", "claude": "medium"}[agent]
-    command = [
-        sys.executable,
-        str(ROOT / "tests/eval/run.py"),
-        "--experiment", str(manifest),
-        "--scenario-file", str(SCENARIO_FILE),
-        "--model-profile", model_profile,
-        "--agent", agent,
-    ]
-    if list_only:
-        command.append("--list")
-    else:
-        command.extend(["--markdown-report", str(results_file)])
-    return command
+    return build_eval_command(
+        root=ROOT,
+        manifest=manifest,
+        results_file=results_file,
+        agent=agent,
+        list_only=list_only,
+        extra_arguments=("--scenario-file", str(SCENARIO_FILE)),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -158,9 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         agent=args.agent,
         scenarios=tuple(args.scenarios) if args.scenarios else None,
     )
-    return subprocess.call(
-        build_command(manifest, args.results_file, args.agent, list_only=args.list),
-        cwd=ROOT,
+    return run_eval(
+        build_command(manifest, args.results_file, args.agent, list_only=args.list), ROOT
     )
 
 

@@ -13,7 +13,7 @@ This three-arm comparative suite verifies how an agent routes documentation work
 - Scenarios may override `iwe_root`, `iwe_documents`, and `iwe_language` through `agents_context`.
 - Guidance bytes and activation are included in resource accounting.
 - Samples: 10 per arm and scenario.
-- Concurrency: 15 jobs in balanced waves.
+- Concurrency: four jobs per available physical CPU core, capped at 20 and rounded down to a complete three-arm group.
 
 ## Arms
 
@@ -49,7 +49,7 @@ An independent judge scores task correctness, scenario compliance, skill complia
 | --- | --- | --- |
 | `--agent {codex,claude}` | `codex` | Selects workers and judges for every arm. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. |
 | `--samples N` | `10` | Sets samples per arm and selected scenario. |
-| `--jobs N` | `15` | Sets concurrent cells. Balanced three-arm waves require a positive multiple of three. |
+| `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`, then rounds down to a multiple of three; values below three become one complete three-arm group. The final balanced wave may be smaller. |
 | `--scenario ID` | all 5 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/iwe-context-routing-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
 | `--list` | disabled | Prints the selected matrix without worker or judge calls. |
