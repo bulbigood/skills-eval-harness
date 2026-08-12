@@ -36,7 +36,7 @@ from eval_core.process import (
     TRANSIENT_PROCESS_ATTEMPTS, TRANSIENT_PROVIDER_MESSAGES, TRANSIENT_RETRY_DELAYS_SECONDS,
     parse_process_output, performance_summary, process_argv, run_process, transient_provider_failure,
 )
-from eval_core.telemetry import ESTIMATED_BYTES_PER_TOKEN, command_metrics, deterministic_metric_failures, efficiency_errors, estimate_input_tokens, load_iwe_telemetry, procedure_errors, route_errors
+from eval_core.telemetry import ESTIMATED_BYTES_PER_TOKEN, _observed_iwe_invocations, command_metrics, deterministic_metric_failures, efficiency_errors, estimate_input_tokens, load_iwe_telemetry, procedure_errors, route_errors, telemetry_integrity_errors
 from eval_core.oracle import (
     _document_links, _document_title, _is_english_audit_retention_decision,
     _source_excerpt, independent_oracle_evidence,
@@ -80,6 +80,7 @@ __all__ = (
     "process_argv",
     "transient_provider_failure",
     "ESTIMATED_BYTES_PER_TOKEN",
+    "_observed_iwe_invocations",
     "command_metrics",
     "efficiency_errors",
     "estimate_input_tokens",
@@ -100,6 +101,7 @@ __all__ = (
     "deterministic_metric_failures",
     "load_iwe_telemetry",
     "procedure_errors",
+    "telemetry_integrity_errors",
     "independent_oracle_evidence",
     "payload_hash",
     "snapshot",
@@ -488,6 +490,7 @@ def main() -> int:
                 target: sorted(metrics)
                 for target, metrics in experiment.aggregate_metric_exclusions_by_target.items()
             },
+            "required_aggregate_targets": sorted(experiment.required_aggregate_targets),
             "guidance_accounting": experiment.guidance_accounting,
             "skill_activation": experiment.skill_activation,
             "worker_scheduling": experiment.worker_scheduling,
@@ -554,7 +557,16 @@ def main() -> int:
         target_prefix = f"{outcome.get('target_id')} / " if outcome.get("target_id") else ""
         print(f"{'PASS' if outcome['pass'] else 'FAIL'} aggregate {target_prefix}{outcome['scenario']}{suffix}")
     print(f"Reports: {report_dir}")
-    return 0 if all(outcome["pass"] for outcome in outcomes) else 1
+    if not experiment:
+        return 0 if all(outcome["pass"] for outcome in outcomes) else 1
+    required_outcomes_pass = all(
+        outcome["pass"]
+        for outcome in outcomes
+        if outcome.get("target_id") in experiment.required_aggregate_targets
+    )
+    all_cells_valid = all(result["verdict"]["valid"] for result in results)
+    all_targets_safe = all(outcome["metrics"]["safety"]["pass"] for outcome in outcomes)
+    return 0 if required_outcomes_pass and all_cells_valid and all_targets_safe else 1
 
 if __name__ == "__main__":
     sys.exit(main())

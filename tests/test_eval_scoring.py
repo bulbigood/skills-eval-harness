@@ -1036,6 +1036,55 @@ class EvalScoringContractTests(unittest.TestCase):
         )
         self.assertEqual(deterministic, {})
 
+    def test_docs_use_is_behavioral_but_telemetry_mismatch_is_integrity(self) -> None:
+        scenario = self.scenario
+        before = {"note.md": "unchanged"}
+        commands = [{"command": "iwe docs retrieve", "output": ""}]
+        mechanical = self.runner.mechanical_errors(
+            scenario, before, before, commands, ROOT
+        )
+        self.assertFalse(any("iwe\\s+docs" in error for error in mechanical))
+
+        metrics = self.runner.command_metrics([])
+        metrics["docs_calls"] = 1
+        metrics["iwe_telemetry_mismatch"] = 1
+        self.assertIn(
+            "web or IWE documentation command used",
+            self.runner.efficiency_errors(scenario, metrics),
+        )
+        self.assertEqual(
+            self.runner.telemetry_integrity_errors(metrics),
+            ["IWE telemetry arguments do not match observed command invocations"],
+        )
+        self.assertNotIn(
+            "IWE telemetry arguments do not match observed command invocations",
+            self.runner.efficiency_errors(scenario, metrics),
+        )
+
+    def test_shell_redirections_are_not_part_of_observed_iwe_argv(self) -> None:
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(
+                "/bin/bash -lc 'iwe --help 2>/dev/null | head -80 || true'"
+            ),
+            [["--help"]],
+        )
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(
+                "/bin/bash -lc 'iwe retrieve -k power -f json 2>&1 | head -20'"
+            ),
+            [["retrieve", "-k", "power", "-f", "json"]],
+        )
+
+    def test_literal_shell_for_loops_expand_observed_iwe_argv(self) -> None:
+        command = "/bin/bash -lc 'for k in power morality; do iwe find --refs-from $k -f keys; done'"
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(command),
+            [
+                ["find", "--refs-from", "power", "-f", "keys"],
+                ["find", "--refs-from", "morality", "-f", "keys"],
+            ],
+        )
+
     def test_efficiency_targets_are_semantic_not_sample_validity_gates(self) -> None:
         scenario = self.scenario
         metrics = self.runner.command_metrics([])
@@ -1045,7 +1094,6 @@ class EvalScoringContractTests(unittest.TestCase):
         errors = self.runner.efficiency_errors(scenario, metrics)
         self.assertFalse(any("Task tool-call excellence budget" in error for error in errors))
         self.assertFalse(any("output-byte excellence budget" in error for error in errors))
-
     def test_agent_prompts_are_neutral_and_scenarios_do_not_leak_test_strategy(self) -> None:
         prompt = self.runner.agent_prompt(self.scenario)
         lowered = prompt.lower()

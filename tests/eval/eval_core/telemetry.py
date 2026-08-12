@@ -101,6 +101,25 @@ def _normalize_ansi_c_quotes(command: str) -> str:
 def _observed_iwe_invocations(command: str) -> list[list[str]]:
     try:
         payload = _normalize_ansi_c_quotes(_command_payload(command))
+        payload = re.sub(r"(?<!\S)(?:\d*>>?\s*\S+|\d*<<?\s*\S+|\d*>&\d+|&>\s*\S+)", "", payload)
+        payload = re.sub(r"\n\s*done\s*$", "; done", payload)
+        loop = re.fullmatch(
+            r"\s*(?:set\s+-o\s+pipefail\s*[;\n]\s*)?for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+?)\s*;\s*do\s+(.*?)\s*[;\n]?\s*done\s*",
+            payload,
+            re.DOTALL,
+        )
+        if loop:
+            variable, raw_values, body = loop.groups()
+            values = shlex.split(raw_values)
+            invocations: list[list[str]] = []
+            for value in values:
+                expanded = re.sub(
+                    rf"\$\{{{re.escape(variable)}\}}|\${re.escape(variable)}\b",
+                    shlex.quote(value),
+                    body,
+                ).replace("\n", "; ")
+                invocations.extend(_observed_iwe_invocations(expanded))
+            return invocations
         lexer = shlex.shlex(payload, posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
         lexer.commenters = ""
@@ -123,7 +142,10 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
             end = index + 1
             while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|"}:
                 end += 1
-            args = tokens[index + 1:end]
+            args = [
+                arg for arg in tokens[index + 1:end]
+                if not re.fullmatch(r"(?:\d*>>?|\d*<<?|&>>?|&>)\S*", arg)
+            ]
             if args and args[0] != "docs":
                 invocations.append(args)
             command_start = False
@@ -437,14 +459,6 @@ def efficiency_errors(
     errors: list[str] = []
     if metrics["unbounded_read_calls"]:
         errors.append("unbounded IWE discovery or retrieval used")
-    if metrics.get("iwe_telemetry_missing", 0):
-        errors.append("IWE telemetry missing for observed command invocation")
-    if metrics.get("iwe_telemetry_extra", 0):
-        errors.append("IWE telemetry contains records without observed command invocations")
-    if metrics.get("iwe_telemetry_mismatch", 0):
-        errors.append("IWE telemetry arguments do not match observed command invocations")
-    if metrics.get("iwe_telemetry_invalid", 0):
-        errors.append("IWE telemetry measurements do not match observed command evidence")
     if metrics.get("iwe_output_truncated", 0):
         errors.append("IWE output exceeded the configured capture budget")
     if metrics["web_calls"] or metrics["docs_calls"]:
@@ -465,6 +479,21 @@ def efficiency_errors(
         if not scenario.allow_fallback:
             errors.append("unavailable scenario must explicitly permit fallback")
     return errors
+
+
+def telemetry_integrity_errors(metrics: dict[str, int]) -> list[str]:
+    """Return capture-integrity failures that make a cell non-evaluable."""
+    errors: list[str] = []
+    if metrics.get("iwe_telemetry_missing", 0):
+        errors.append("IWE telemetry missing for observed command invocation")
+    if metrics.get("iwe_telemetry_extra", 0):
+        errors.append("IWE telemetry contains records without observed command invocations")
+    if metrics.get("iwe_telemetry_mismatch", 0):
+        errors.append("IWE telemetry arguments do not match observed command invocations")
+    if metrics.get("iwe_telemetry_invalid", 0):
+        errors.append("IWE telemetry measurements do not match observed command evidence")
+    return errors
+
 
 def route_errors(
     scenario: Scenario,

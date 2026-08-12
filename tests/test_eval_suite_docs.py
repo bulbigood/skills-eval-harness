@@ -83,6 +83,9 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
                 "fix-code-without-activating-iwe",
             ),
             "docs/evals/skill-guidance-efficiency-ab.md": (
+                "summarize-one-topic",
+                "read-one-note-with-parent-context",
+                "list-and-sort-typed-notes",
                 "discover-and-retrieve-bounded-multi-hop-context",
                 "query-structured-metadata-without-scanning-files",
                 "ambiguous-discovery-with-one-follow-up",

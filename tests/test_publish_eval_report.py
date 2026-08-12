@@ -48,7 +48,12 @@ class PublishEvalReportTests(unittest.TestCase):
         }
         summary = {
             "experiment": "demo-suite",
-            "scenarios": [{"target_id": "skill", "scenario_id": "scenario", "pass": True}],
+            "scenarios": [{
+                "target_id": "skill",
+                "scenario_id": "scenario",
+                "pass": True,
+                "metrics": {"safety": {"pass": True}},
+            }],
         }
         raw = {
             "target_id": "skill",

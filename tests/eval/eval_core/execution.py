@@ -25,7 +25,10 @@ from .prompts import agent_prompt, judge_prompt
 from .scenarios import Scenario
 from .scheduling import MatrixCell
 from .scoring import efficiency_diagnostics, profile_verdict, verdict
-from .telemetry import command_metrics, deterministic_metric_failures, load_iwe_telemetry, procedure_errors
+from .telemetry import (
+    command_metrics, deterministic_metric_failures, load_iwe_telemetry,
+    procedure_errors, telemetry_integrity_errors,
+)
 from .workspace import (
     agents_file_provenance,
     assert_workspace_ready,
@@ -201,6 +204,7 @@ def _execute_agent(
     after = snapshot(workspace)
     mechanical = mechanical_errors(scenario, before, after, agent['commands'], workspace)
     integrity_errors, postcondition_failures = classify_mechanical_errors(mechanical)
+    integrity_errors.extend(telemetry_integrity_errors(agent['metrics']))
     procedural_errors = procedure_errors(scenario, agent['commands'], agent['metrics'], agent['iwe_telemetry'], allow_filesystem_fallback=bool(isinstance(task, MatrixCell) and local_skill is None and (local_target.agents_file is None)))
     return AgentRun(
         workspace, base_name, installed_agents_file, before, after, host_auth,

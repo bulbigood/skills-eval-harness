@@ -8,10 +8,11 @@ This paired A/B suite estimates the causal effect of skill guidance relative to 
 
 - Skill source: a local directory, `file://` URI, or GitHub `/tree/REF/PATH` directory URL.
 - GitHub refs are resolved and recorded as exact commits; local payloads are content-hashed.
-- Both arms use the same IWE CLI binary, version, fixture, request, production `AGENTS.md`, agent, judge, and sample seed.
-- The shared `AGENTS.md` is rendered from `tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl`; it is always present and contains no command fast paths that duplicate the skill.
+- Both arms use the same IWE CLI binary, version, fixture, request, agent, judge, and sample seed.
+- No `AGENTS.md` is installed by default, matching the current IWE runtime.
+- Future production policy can be supplied explicitly with `--agents-template-source`; the resolved text/template is installed identically in both arms so it is not conflated with the skill treatment.
 - The treatment uses the skill selected by `--skill-source`; the control sets `skill_mode = "none"`.
-- Shared policy cost, skill activation, and reference reads are included in resource accounting.
+- Skill activation and reference reads are included in resource accounting. When an optional shared policy is supplied, its rendered cost is included identically in both arms.
 - Scheduling uses balanced paired waves to reduce wall-time bias.
 - Agent/judge profile: `weak` by default.
 - Samples: 10 paired samples per arm and scenario.
@@ -21,13 +22,16 @@ This paired A/B suite estimates the causal effect of skill guidance relative to 
 
 | Arm | Condition |
 | --- | --- |
-| Default skill | Production `AGENTS.md`, IWE runtime, and the selected skill. |
-| No skill | The identical production `AGENTS.md` and IWE runtime exposed without skill guidance. |
+| Default skill | IWE runtime and the selected skill. |
+| No skill | The identical IWE runtime exposed without skill guidance. |
 
 ## Scenarios
 
 | Scenario ID | Fixture | Why it is included |
 | --- | --- | --- |
+| `summarize-one-topic` | `pkm-demo-core-read` | Tests whether a short common request stays one-pass despite skill activation overhead. |
+| `read-one-note-with-parent-context` | `pkm-demo-core-read` | Tests one bounded parent expansion instead of relationship discovery plus separate reads. |
+| `list-and-sort-typed-notes` | `pkm-demo-core-read` | Tests typed projection and server-side sorting without loading note bodies or scanning files. |
 | `discover-and-retrieve-bounded-multi-hop-context` | `seventeen-centuries` | Tests one-pass bounded synthesis instead of discovery followed by repeated reads. |
 | `query-structured-metadata-without-scanning-files` | `seventeen-centuries` | Tests direct structured graph querying instead of filesystem scanning. |
 | `ambiguous-discovery-with-one-follow-up` | `pkm-demo-api-project` | Tests bounded discovery with exactly one justified follow-up read and a stopping rule. |
@@ -38,9 +42,9 @@ The treatment and control receive byte-identical fixture copies. Fixture-derived
 
 ## Evaluation method
 
-Correctness, scenario compliance, skill compliance, safety, and evidence quality remain quality gates for both arms. The A/B decision compares `tool_efficiency` and `resource_efficiency`, including activation cost. Reports include paired pass-rate deltas, tool calls, token/resource usage, worker duration, and bootstrap timing summaries. A speedup is accepted only when quality and safety do not regress; faster wrong answers remain, technically speaking, wrong.
+Correctness, scenario compliance, skill compliance, safety, and evidence quality remain measured for both arms. The treatment must pass those quality gates; the control remains fully reported and may fail them because discovering that the unguided baseline produces a wrong answer is a legitimate treatment effect, not an infrastructure failure. Safety and sample validity remain fail-closed across both arms. The A/B decision compares `tool_efficiency` and `resource_efficiency`, including activation cost. These efficiency dimensions are excluded from standalone arm acceptance because their purpose is paired comparison, not absolute route conformance. Reports include paired pass-rate deltas, tool calls, token/resource usage, worker duration, and bootstrap timing summaries. A speedup is accepted only when treatment quality and safety do not regress; faster wrong answers remain, technically speaking, wrong.
 
-The no-skill control excludes `tool_efficiency` and `resource_efficiency` only from its standalone aggregate gate: those are the treatment metrics the experiment is designed to compare. Their raw control scores remain in paired comparison, while correctness, scenario compliance, safety, and evidence quality remain fail-closed for both arms. `skill_compliance` is N/A when no skill is installed.
+The runner exits successfully only when every cell is valid, every arm passes safety, and the guided treatment passes all applicable non-efficiency quality gates. Control failures remain visible in target aggregates, the problem ledger, and paired comparisons. `skill_compliance` is N/A when no skill is installed.
 
 ## Run
 
@@ -51,9 +55,11 @@ The no-skill control excludes `tool_efficiency` and `resource_efficiency` only f
 | `--agent {codex,claude}` | `codex` | Selects both worker and judge. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. Both A/B arms use the same selection. |
 | `--samples N` | `10` | Sets paired samples per arm and selected scenario. |
 | `--jobs N` | `min(physical cores × 4, 32)` | Sets requested concurrency. The runner clamps it to `1..32`, then rounds down to an even value; values below two become one complete two-arm group. The final balanced wave may be smaller. |
-| `--scenario ID` | all 3 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
+| `--scenario ID` | all 6 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/skill-guidance-efficiency-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
+| `--publish-output PATH` | unset | After a successful complete 120-cell run, invokes the fail-closed publisher and writes a sanitized tracked report under `docs/evals/results/`. Partial and smoke matrices are rejected. |
 | `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |
+| `--agents-template-source SOURCE` | unset | Optionally loads the exact `AGENTS.md` text/template from a local path, `file://` URI, or HTTPS URL and installs it identically in both arms. The response body is the template; HTML page URLs are therefore invalid inputs even if they display the file. |
 | `--list` | disabled | Resolves the source and prints the selected matrix without worker or judge calls. |
 
 Examples:
@@ -69,14 +75,18 @@ uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_
 ```bash
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py --list
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py
+
+# Full production evaluation followed by fail-closed publication.
+uv run --with-requirements tests/eval/requirements.txt python scripts/run_skill_guidance_efficiency_ab.py \
+  --publish-output docs/evals/results/skill-guidance-efficiency-ab-f571d6f.md
 ```
 
-Use `--samples 1` for a bounded six-cell smoke run; repeat `--scenario` to select a subset when diagnosing one route.
+Use `--samples 1` for a bounded twelve-cell smoke run; repeat `--scenario` to select a subset when diagnosing one route.
 
 A new Markdown report defaults to `tests/eval/results/skill-guidance-efficiency-ab.md`. Generated results are intentionally untracked.
 
 ## Matrix and model cost
 
-- 2 arms × 3 scenarios × 10 samples = **60 cells**.
-- **60 worker calls** and **60 judge calls**.
+- 2 arms × 6 scenarios × 10 samples = **120 cells**.
+- **120 worker calls** and **120 judge calls**.
 - `--list` makes no model calls.

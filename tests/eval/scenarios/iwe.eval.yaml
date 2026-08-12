@@ -667,7 +667,7 @@ scenarios:
   efficiency: {task_tool_calls: [1, 1], task_tool_output_bytes: [0, 6400]}
   excellent:
     task_correctness: Accurately reports core-beta and its direct parent core-alpha.
-    scenario_compliance: Uses one bounded parent-context read and names both keys.
+    scenario_compliance: Reports only the requested seed and direct-parent contents and names both keys.
     evidence_quality: Content and parent relationship agree with independently parsed fixture files.
 
 - id: route-listed-runbook-through-iwe

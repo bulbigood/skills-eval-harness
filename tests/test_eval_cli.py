@@ -108,7 +108,7 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             ),
         )
 
-    def test_guidance_efficiency_ab_profile_is_two_arm_three_scenario_ten_sample(self) -> None:
+    def test_guidance_efficiency_ab_profile_is_two_arm_six_scenario_ten_sample(self) -> None:
         module = load_module(
             ROOT / "scripts/run_skill_guidance_efficiency_ab.py",
             "run_skill_guidance_efficiency_ab",
@@ -119,6 +119,9 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(module.DEFAULT_JOBS, concurrency.DEFAULT_JOBS)
         self.assertEqual(module.SAMPLES, 10)
         self.assertEqual(module.SCENARIOS, (
+            "summarize-one-topic",
+            "read-one-note-with-parent-context",
+            "list-and-sort-typed-notes",
             "discover-and-retrieve-bounded-multi-hop-context",
             "query-structured-metadata-without-scanning-files",
             "ambiguous-discovery-with-one-follow-up",
@@ -144,17 +147,18 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(tuple(manifest["comparison_metrics"]), module.COMPARISON_METRICS)
         self.assertEqual(
             manifest["aggregate_metric_exclusions_by_target"],
-            {"iwe-no-skill": ["tool_efficiency", "resource_efficiency"]},
+            {
+                "iwe-v18": ["tool_efficiency", "resource_efficiency"],
+                "iwe-no-skill": ["tool_efficiency", "resource_efficiency"],
+            },
         )
+        self.assertEqual(manifest["required_aggregate_targets"], ["iwe-v18"])
         self.assertEqual(manifest["guidance_accounting"], "include_activation")
         self.assertEqual(manifest["worker_scheduling"], "balanced_waves")
         self.assertEqual([target["id"] for target in manifest["targets"]], [
             "iwe-v18", "iwe-no-skill",
         ])
-        self.assertEqual(
-            {target["agents_file"] for target in manifest["targets"]},
-            {"tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl"},
-        )
+        self.assertTrue(all("agents_file" not in target for target in manifest["targets"]))
         self.assertNotIn("skill_mode", manifest["targets"][0])
         self.assertEqual(manifest["targets"][1]["skill_mode"], "none")
         self.assertNotIn("skill_path", manifest["targets"][1])
@@ -167,8 +171,12 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(experiment.worker_scheduling, "balanced_waves")
         self.assertEqual(
             experiment.aggregate_metric_exclusions_by_target,
-            {"iwe-no-skill": frozenset({"tool_efficiency", "resource_efficiency"})},
+            {
+                "iwe-v18": frozenset({"tool_efficiency", "resource_efficiency"}),
+                "iwe-no-skill": frozenset({"tool_efficiency", "resource_efficiency"}),
+            },
         )
+        self.assertEqual(experiment.required_aggregate_targets, frozenset({"iwe-v18"}))
         self.assertEqual(
             experiment.aggregate_exclusions_for("iwe-no-skill"),
             frozenset({"skill_compliance", "tool_efficiency", "resource_efficiency"}),
@@ -178,8 +186,8 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             if scenario.id in experiment.scenario_ids
         ]
         cells = load_runner().build_matrix(experiment, scenarios)
-        self.assertEqual(len(cells), 60)
-        self.assertEqual(len({cell.pair_id for cell in cells}), 30)
+        self.assertEqual(len(cells), 120)
+        self.assertEqual(len({cell.pair_id for cell in cells}), 60)
         waves = load_runner().balanced_waves(cells, experiment.jobs)
         self.assertEqual(sum(map(len, waves)), len(cells))
         self.assertTrue(all(0 < len(wave) <= experiment.jobs for wave in waves))
@@ -198,6 +206,37 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
                 self.assertEqual([cell.target_id for cell in pair], expected)
         command = module.build_command(manifest_path, Path("result.md"), "codex", list_only=True)
         self.assertIn("--list", command)
+
+    def test_guidance_efficiency_ab_can_share_an_explicit_agents_template(self) -> None:
+        module = load_module(
+            ROOT / "scripts/run_skill_guidance_efficiency_ab.py",
+            "run_skill_guidance_agents_template",
+        )
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            template = Path(directory) / "source.AGENTS.md.tmpl"
+            template.write_text("Shared policy: {{iwe_documents}}\n", encoding="utf-8")
+            materialized = module.materialize_agents_template(ROOT, str(template))
+            self.assertEqual(
+                materialized,
+                (ROOT / module.AGENTS_CACHE_FILE).resolve(),
+            )
+            self.assertEqual(materialized.read_bytes(), template.read_bytes())
+            with mock.patch.object(
+                module, "verify_runtime_binary", return_value=Path("/bin/true")
+            ):
+                manifest_path = module.write_experiment(
+                    root=ROOT,
+                    source=source,
+                    agents_template=materialized,
+                )
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {target["agents_file"] for target in manifest["targets"]},
+            {str(module.AGENTS_CACHE_FILE)},
+        )
 
     def test_default_skill_eval_uses_the_explicit_correctness_efficiency_suite(self) -> None:
         module = load_module(ROOT / "scripts/run_default_skill_eval.py", "run_iwe_all_scenarios")

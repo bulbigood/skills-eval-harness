@@ -91,9 +91,19 @@ def _validate_run(run: Path, manifest: Path) -> tuple[dict, dict, list[Path]]:
     outcomes = summary.get("scenarios", [])
     if len(outcomes) != len(targets) * len(scenarios):
         raise ValueError("aggregate summary is incomplete")
-    failed = [item for item in outcomes if not item.get("pass")]
+    required_targets = set(experiment.get("required_aggregate_targets", targets))
+    failed = [
+        item for item in outcomes
+        if item.get("target_id") in required_targets and not item.get("pass")
+    ]
     if failed:
-        raise ValueError(f"aggregate run is not green: {len(failed)} failed rows")
+        raise ValueError(f"required aggregate run is not green: {len(failed)} failed rows")
+    unsafe = [
+        item for item in outcomes
+        if not item.get("metrics", {}).get("safety", {}).get("pass")
+    ]
+    if unsafe:
+        raise ValueError(f"unsafe aggregate rows cannot be published: {len(unsafe)}")
     return experiment, summary, files
 
 

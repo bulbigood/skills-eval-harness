@@ -71,6 +71,7 @@ class Experiment:
     comparison_metrics: tuple[str, ...] | None
     metric_exclusions: dict[str, frozenset[str]]
     aggregate_metric_exclusions_by_target: dict[str, frozenset[str]]
+    required_aggregate_targets: frozenset[str]
     guidance_accounting: str
     skill_activation: str
     worker_scheduling: str
@@ -130,6 +131,13 @@ def load_experiment(
         raise ValueError(
             "aggregate metric exclusions reference unknown targets: "
             f"{sorted(unknown_aggregate_targets)}"
+        )
+    required_aggregate_targets = frozenset(document.get("required_aggregate_targets", ids))
+    unknown_required_targets = required_aggregate_targets - set(ids)
+    if unknown_required_targets:
+        raise ValueError(
+            "required aggregate targets reference unknown targets: "
+            f"{sorted(unknown_required_targets)}"
         )
 
     scenario_file = scenario_file or EVAL / "scenarios/iwe.eval.yaml"
@@ -199,6 +207,7 @@ def load_experiment(
                       tuple(comparison_metrics) if comparison_metrics is not None else None,
                       {scenario: frozenset(metrics) for scenario, metrics in document.get("metric_exclusions", {}).items()},
                       {target: frozenset(metrics) for target, metrics in aggregate_exclusions.items()},
+                      required_aggregate_targets,
                       document.get("guidance_accounting", "exclude_activation"),
                       document.get("skill_activation", "scenario"),
                       document.get("worker_scheduling", "streaming"),

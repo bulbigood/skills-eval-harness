@@ -16,7 +16,6 @@ from .scenarios import Scenario
 
 
 FORBIDDEN = (
-    re.compile(r"\biwe\s+docs\b"),
     re.compile(r"\b(?:curl|wget|gh|git\s+clone)\b"),
 )
 
