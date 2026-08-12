@@ -4,20 +4,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import shlex
 import shutil
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from experiment import Experiment
 from skill_manifest import SkillSpec
-from .config import EvalConfig, ModelProfile
+from .config import DIMENSIONS, EvalConfig, ModelProfile
 from .io import atomic_write_json
 from .mechanical import classify_mechanical_errors, mechanical_errors
 from .oracle import independent_oracle_evidence, payload_hash, snapshot
-from .process import run_process
+from .process import TRANSIENT_PROVIDER_MESSAGES, run_process
 from .prompts import agent_prompt, judge_prompt
 from .scenarios import Scenario
 from .scheduling import MatrixCell
@@ -40,6 +43,27 @@ from .workspace import (
 
 ROOT = Path(__file__).resolve().parents[3]
 EVAL = Path(__file__).resolve().parents[1]
+
+CELL_PROVIDER_ATTEMPTS = 3
+CELL_RETRY_DELAYS_SECONDS = (15, 45)
+CELL_RETRY_JITTER = 0.2
+CELL_RETRY_MIN_SPACING_SECONDS = 1.0
+_PROVIDER_COOLDOWN_LOCK = threading.Lock()
+_PROVIDER_COOLDOWN_UNTIL = 0.0
+
+
+def _wait_for_provider_retry(delay: float) -> None:
+    """Reserve a jittered retry time so concurrent cells do not retry in lockstep."""
+    global _PROVIDER_COOLDOWN_UNTIL
+    jittered = delay * random.uniform(1 - CELL_RETRY_JITTER, 1 + CELL_RETRY_JITTER)
+    with _PROVIDER_COOLDOWN_LOCK:
+        now = time.monotonic()
+        scheduled = max(
+            now + jittered,
+            _PROVIDER_COOLDOWN_UNTIL + CELL_RETRY_MIN_SPACING_SECONDS,
+        )
+        _PROVIDER_COOLDOWN_UNTIL = scheduled
+    time.sleep(max(scheduled - now, 0.0))
 
 
 @dataclass(frozen=True)
@@ -249,6 +273,7 @@ def _record_result(
     cell: ResolvedCell,
     run: AgentRun,
     evaluation: Evaluation,
+    accounting: dict[str, int | bool] | None = None,
 ) -> dict:
     config = context.config
     eval_config = context.eval_config
@@ -270,6 +295,8 @@ def _record_result(
     raw_sample_verdict = evaluation.raw_verdict
     sample_profile = evaluation.profile
     result = {'scenario': scenario.name, 'scenario_id': scenario.id, 'sample': sample, 'fixture': {'name': scenario.fixture, 'commit': config['fixtures'][base_name]['commit']}, 'agent_judge_config': {'name': config['name'], 'agent_command_sha256': hashlib.sha256(config['agent_command'].encode()).hexdigest(), 'judge_command_sha256': hashlib.sha256(config['judge_command'].encode()).hexdigest()}, 'scoring_contract': {'scale': eval_config.score_scale, 'dimensions': scenario.scoring}, 'evaluation_profile': sample_profile, 'efficiency_expectations': {'task_tool_calls': [scenario.min_tool_calls, scenario.max_tool_calls], 'task_tool_output_bytes': [scenario.min_task_tool_output_bytes, scenario.max_task_tool_output_bytes], 'max_iwe_calls': scenario.max_iwe_calls, 'hard_max_task_tool_calls': scenario.hard_max_task_tool_calls}, 'agent': agent, 'preinjected_guidance_bytes': preinjected_guidance_bytes(installed_agents_file), 'efficiency_diagnostics': range_diagnostics, 'judge': judge, 'verdict': raw_sample_verdict, 'workspace': str(workspace) if context.keep_workspaces else None}
+    if accounting:
+        result.update(accounting)
     if experiment:
         result['target_id'] = target_id
         result['pair_id'] = pair_id
@@ -288,12 +315,143 @@ def _record_result(
     return result
 
 
+def _retryable_worker_provider_failure(run: AgentRun) -> str | None:
+    agent = run.agent
+    if agent.get('exit') == 0:
+        return None
+    provider_errors = [str(error).casefold() for error in agent.get('provider_errors', [])]
+    return next(
+        (
+            message
+            for message in TRANSIENT_PROVIDER_MESSAGES
+            if any(message in error for error in provider_errors)
+        ),
+        None,
+    )
+
+
+def _attempt_path(context: RunContext, cell: ResolvedCell, attempt: int) -> Path:
+    target = cell.target_id if context.experiment else 'single'
+    return (
+        context.report_dir
+        / 'attempts'
+        / target
+        / f'{cell.scenario.slug}--{cell.sample}--attempt-{attempt}.json'
+    )
+
+
+def _record_worker_attempt(
+    context: RunContext,
+    cell: ResolvedCell,
+    run: AgentRun,
+    attempt: int,
+) -> None:
+    agent = run.agent
+    atomic_write_json(_attempt_path(context, cell, attempt), {
+        'target_id': cell.target_id,
+        'scenario_id': cell.scenario.id,
+        'sample': cell.sample,
+        'attempt': attempt,
+        'classification': 'retryable_provider_failure',
+        'provider_error': _retryable_worker_provider_failure(run),
+        'agent': agent,
+        'workspace_changed': run.before != run.after,
+        'workspace': str(run.workspace) if context.keep_workspaces else None,
+    })
+
+
+def _provider_failure_evaluation(
+    context: RunContext,
+    scenario: Scenario,
+    run: AgentRun,
+) -> Evaluation:
+    error = _retryable_worker_provider_failure(run) or 'provider process failed'
+    rationale = f'Worker did not complete because of a transient provider failure: {error}.'
+    critique = {
+        'rationale': rationale,
+        'evidence': [error],
+        'dimensions': {
+            name: {'score': 0, 'rationale': rationale, 'evidence': [error]}
+            for name in DIMENSIONS
+        },
+    }
+    raw_verdict = verdict(
+        scenario,
+        critique,
+        ['worker provider retries exhausted'],
+        exits_ok=False,
+    )
+    judge = {
+        'exit': None,
+        'final': json.dumps(critique, ensure_ascii=False),
+        'commands': [],
+        'attempts': 0,
+        'transient_failures': [],
+        'skipped': 'worker provider retries exhausted',
+    }
+    return Evaluation(
+        {},
+        judge,
+        raw_verdict,
+        profile_verdict(raw_verdict, context.model_profile),
+    )
+
+
+def retry_summary(results: list[dict]) -> dict[str, int]:
+    return {
+        'declared_cells': len(results),
+        'worker_cell_attempts': sum(int(result.get('worker_cell_attempts', 1)) for result in results),
+        'worker_process_attempts': sum(int(result.get('worker_process_attempts', 1)) for result in results),
+        'judge_process_attempts': sum(int(result.get('judge_process_attempts', 1)) for result in results),
+        'retried_cells': sum(int(result.get('worker_cell_attempts', 1)) > 1 for result in results),
+        'recovered_cells': sum(bool(result.get('provider_failure_recovered')) for result in results),
+        'exhausted_cells': sum(
+            int(result.get('worker_cell_attempts', 1)) > 1
+            and not bool(result.get('provider_failure_recovered'))
+            for result in results
+        ),
+    }
+
+
 def execute_cell(context: RunContext, task, worker_wave_id: int | None = None) -> dict:
     cell = _resolve_cell(context, task)
-    lease = _create_workspace_lease(context)
-    try:
-        run = _execute_agent(context, cell, lease, task, worker_wave_id)
-        evaluation = _evaluate_agent(context, cell, lease, run)
-        return _record_result(context, cell, run, evaluation)
-    finally:
-        lease.cleanup()
+    prior_worker_process_attempts = 0
+    for attempt in range(1, CELL_PROVIDER_ATTEMPTS + 1):
+        lease = _create_workspace_lease(context)
+        try:
+            run = _execute_agent(context, cell, lease, task, worker_wave_id)
+            retryable = _retryable_worker_provider_failure(run)
+            clean_retry = retryable is not None and bool(run.agent.get('tool_activity'))
+            if clean_retry and attempt < CELL_PROVIDER_ATTEMPTS:
+                prior_worker_process_attempts += int(run.agent.get('attempts', 1))
+                _record_worker_attempt(context, cell, run, attempt)
+            else:
+                if retryable is not None:
+                    _record_worker_attempt(context, cell, run, attempt)
+                evaluation = (
+                    _provider_failure_evaluation(context, cell.scenario, run)
+                    if retryable is not None
+                    else _evaluate_agent(context, cell, lease, run)
+                )
+                accounting = {
+                    'worker_cell_attempts': attempt,
+                    'worker_process_attempts': (
+                        prior_worker_process_attempts + int(run.agent.get('attempts', 1))
+                    ),
+                    'prior_retryable_provider_failures': attempt - 1,
+                    'provider_failure_recovered': (
+                        attempt > 1 and run.agent.get('exit') == 0
+                    ),
+                    'judge_process_attempts': int(evaluation.judge.get('attempts', 0)),
+                }
+                return _record_result(
+                    context,
+                    cell,
+                    run,
+                    evaluation,
+                    accounting,
+                )
+        finally:
+            lease.cleanup()
+        _wait_for_provider_retry(CELL_RETRY_DELAYS_SECONDS[attempt - 1])
+    raise AssertionError('unreachable cell retry state')

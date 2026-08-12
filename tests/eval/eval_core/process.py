@@ -37,6 +37,8 @@ def parse_process_output(executable_name: str, stdout: str) -> dict:
     final = ""
     commands: list[dict] = []
     pending_bash: dict[str, str] = {}
+    provider_errors: list[str] = []
+    tool_activity = False
     token_usage: dict[str, int] = {}
     for line in stdout.splitlines():
         try:
@@ -61,6 +63,7 @@ def parse_process_output(executable_name: str, stdout: str) -> dict:
                     if not isinstance(item, dict) or item.get("type") != "tool_use":
                         continue
                     if item.get("name") == "Bash" and isinstance(item.get("input"), dict):
+                        tool_activity = True
                         pending_bash[str(item.get("id", ""))] = str(item["input"].get("command", ""))
             if event.get("type") == "user" and isinstance(content, list):
                 for item in content:
@@ -75,6 +78,8 @@ def parse_process_output(executable_name: str, stdout: str) -> dict:
                             "output": _claude_tool_result_text(item.get("content")),
                         })
             if event.get("type") == "result":
+                if event.get("is_error"):
+                    provider_errors.append(str(event.get("result", "provider error")))
                 if event.get("structured_output") is not None:
                     final = json.dumps(event["structured_output"], ensure_ascii=False)
                 elif event.get("result") is not None:
@@ -88,11 +93,23 @@ def parse_process_output(executable_name: str, stdout: str) -> dict:
                 "output_tokens": int(usage.get("output_tokens", 0)),
             }
         item = event.get("item", {})
+        if event.get("type") in {"error", "turn.failed"}:
+            error = event.get("error", event.get("message", "provider error"))
+            provider_errors.append(str(error.get("message", error)) if isinstance(error, dict) else str(error))
+        if event.get("type") == "item.started" and item.get("type") == "command_execution":
+            tool_activity = True
         if event.get("type") == "item.completed" and item.get("type") == "agent_message":
             final = str(item.get("text", ""))
         if event.get("type") == "item.completed" and item.get("type") == "command_execution":
+            tool_activity = True
             commands.append({"command": str(item.get("command", "")), "exit_code": int(item.get("exit_code") or 0), "output": str(item.get("aggregated_output", ""))})
-    return {"final": final or stdout, "commands": commands, "token_usage": token_usage}
+    return {
+        "final": final or stdout,
+        "commands": commands,
+        "token_usage": token_usage,
+        "provider_errors": provider_errors,
+        "tool_activity": tool_activity,
+    }
 
 def performance_summary(results: list[dict], target_ids: tuple[str, ...]) -> dict[str, dict]:
     """Return per-target descriptive statistics over every worker sample."""
@@ -126,7 +143,7 @@ TRANSIENT_RETRY_DELAYS_SECONDS = (2, 4, 8)
 
 def transient_provider_failure(result: dict) -> str | None:
     """Return a recognized transient message only before any tool execution."""
-    if result["exit"] == 0 or result.get("commands"):
+    if result["exit"] == 0 or result.get("tool_activity"):
         return None
     output = f"{result.get('stdout', '')}\n{result.get('stderr', '')}".casefold()
     return next((message for message in TRANSIENT_PROVIDER_MESSAGES if message in output), None)

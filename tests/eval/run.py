@@ -42,7 +42,7 @@ from eval_core.oracle import (
     independent_schema_validation_evidence, payload_hash, snapshot,
 )
 from eval_core.prompts import agent_prompt, judge_prompt
-from eval_core.execution import RunContext, execute_cell
+from eval_core.execution import RunContext, execute_cell, retry_summary
 from eval_core.io import atomic_write_json
 from eval_core.workspace import (
     agents_file_provenance, assert_workspace_ready, create_judge_workspace,
@@ -440,6 +440,7 @@ def main() -> int:
         "minimum_score": model_profile.minimum_score,
         "required_success_percent": model_profile.required_success_percent,
         "scenarios": outcomes,
+        "retry_accounting": retry_summary(results),
         "results": [
             ({"target_id": r["target_id"], "pair_id": r["pair_id"]} if experiment else {})
             | {"scenario_id": r["scenario_id"], "scenario": r["scenario"],
