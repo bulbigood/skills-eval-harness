@@ -130,7 +130,7 @@ def write_experiment(
         'name = "iwe-default-skill-correctness-efficiency"',
         f"agent_judge_config = {json.dumps(agent)}",
         f"scenarios = {json.dumps(scenario_ids)}",
-        'guidance_accounting = "include_activation"',
+        'guidance_accounting = "exclude_activation"',
         f"samples = {samples}",
         f"jobs = {jobs}",
     ]

@@ -228,7 +228,7 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             "tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl",
         )
         experiment = load_eval_module("experiment").load_experiment(manifest_path, ROOT)
-        self.assertEqual(experiment.guidance_accounting, "include_activation")
+        self.assertEqual(experiment.guidance_accounting, "exclude_activation")
         self.assertEqual(experiment.worker_scheduling, "streaming")
         self.assertEqual(len(manifest["targets"]), 1)
         self.assertEqual(manifest["targets"][0]["id"], "iwe-v18")
