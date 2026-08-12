@@ -147,7 +147,10 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
         reports = sorted((ROOT / "docs/evals/results").glob("*.md"))
         self.assertEqual(
             [path.name for path in reports],
-            ["default-skill-correctness-efficiency-f571d6f.md"],
+            [
+                "default-skill-correctness-efficiency-f571d6f.md",
+                "skill-guidance-efficiency-ab-f571d6f.md",
+            ],
         )
         for report in reports:
             text = report.read_text(encoding="utf-8")
