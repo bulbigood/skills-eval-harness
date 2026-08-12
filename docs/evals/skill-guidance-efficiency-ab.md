@@ -15,7 +15,7 @@ This paired A/B suite estimates the causal effect of skill guidance relative to 
 - Scheduling uses balanced paired waves to reduce wall-time bias.
 - Agent/judge profile: `weak` by default.
 - Samples: 10 paired samples per arm and scenario.
-- Concurrency: four jobs per available physical CPU core, capped at 20 and rounded down to a complete two-arm group.
+- Concurrency: four jobs per available physical CPU core, capped at 32 and rounded down to a complete two-arm group.
 
 ## Arms
 
@@ -50,7 +50,7 @@ The no-skill control excludes `tool_efficiency` and `resource_efficiency` only f
 | --- | --- | --- |
 | `--agent {codex,claude}` | `codex` | Selects both worker and judge. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. Both A/B arms use the same selection. |
 | `--samples N` | `10` | Sets paired samples per arm and selected scenario. |
-| `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`, then rounds down to an even value; values below two become one complete two-arm group. The final balanced wave may be smaller. |
+| `--jobs N` | `min(physical cores × 4, 32)` | Sets requested concurrency. The runner clamps it to `1..32`, then rounds down to an even value; values below two become one complete two-arm group. The final balanced wave may be smaller. |
 | `--scenario ID` | all 3 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/skill-guidance-efficiency-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
 | `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |

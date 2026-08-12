@@ -12,7 +12,7 @@ This non-A/B release evaluation verifies that the skill directory selected by `-
 - Runtime: the CLI and tested version declared for that selected skill in `config.toml`.
 - Agent/judge profile: `weak` by default.
 - Samples: 10 independent samples per scenario.
-- Concurrency: four jobs per available physical CPU core, capped at 20.
+- Concurrency: four jobs per available physical CPU core, capped at 32.
 - Scenario catalog: `tests/eval/scenarios/iwe.eval.yaml`.
 - Membership: `DEFAULT_SKILL_SCENARIOS` in `scripts/eval_suite_membership.py`.
 - Production context: every cell receives the rendered `tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl` policy. It supplies workspace scope, fallback, root, and authoring-language context and contains no command fast paths that duplicate the skill.
@@ -73,7 +73,7 @@ Each sample is run by an isolated worker and evaluated by an independent judge. 
 | --- | --- | --- |
 | `--agent {codex,claude}` | `codex` | Selects both the worker and independent judge implementation. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. |
 | `--samples N` | `10` | Sets the number of independent samples per selected scenario. |
-| `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`; this single-arm suite needs no arm-group adjustment. |
+| `--jobs N` | `min(physical cores × 4, 32)` | Sets requested concurrency. The runner clamps it to `1..32`; this single-arm suite needs no arm-group adjustment. |
 | `--scenario ID` | all 31 suite scenarios | Restricts the run to one exact scenario ID. Repeat the option to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/iwe-default-skill-eval.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
 | `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |

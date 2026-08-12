@@ -17,7 +17,7 @@ When `--skill` is omitted, the runner uses `default_skill` from root `config.tom
 
 The agent implementation determines the evaluator acceptance profile: `claude` requires `medium`, while `codex` requires `weak`. Omitting `--model-profile` selects that canonical profile automatically. Passing a mismatched explicit profile fails before any agent call.
 
-All runs use one concurrency default: four jobs per available physical CPU core, capped at 20. Single-target runs clamp requested `--jobs` to `1..20`. Balanced experiments additionally round concurrency down to a complete arm group; their minimum is therefore one full group rather than one job. A smaller final wave is allowed when it still contains complete groups. Use `--samples N` when repeated samples are intentional. Experiment manifests can provide requested jobs, but the runner applies the same normalization.
+All runs use one concurrency default: four jobs per available physical CPU core, capped at 32. Single-target runs clamp requested `--jobs` to `1..32`. Balanced experiments additionally round concurrency down to a complete arm group; their minimum is therefore one full group rather than one job. A smaller final wave is allowed when it still contains complete groups. Use `--samples N` when repeated samples are intentional. Experiment manifests can provide requested jobs, but the runner applies the same normalization.
 
 ## Multi-target paired experiments
 

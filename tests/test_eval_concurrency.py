@@ -26,27 +26,29 @@ def load_module(path: Path, name: str):
 
 
 class EvalConcurrencyTests(unittest.TestCase):
-    def test_default_jobs_is_four_per_physical_core_capped_at_twenty(self) -> None:
+    def test_default_jobs_is_four_per_physical_core_capped_at_thirty_two(self) -> None:
         concurrency = load_module(SCRIPTS / "eval_concurrency.py", "eval_concurrency_test_defaults")
         self.assertEqual(concurrency.default_jobs(1), 4)
         self.assertEqual(concurrency.default_jobs(2), 8)
         self.assertEqual(concurrency.default_jobs(5), 20)
-        self.assertEqual(concurrency.default_jobs(64), 20)
+        self.assertEqual(concurrency.default_jobs(8), 32)
+        self.assertEqual(concurrency.default_jobs(64), 32)
 
-    def test_single_arm_normalization_clamps_to_one_through_twenty(self) -> None:
+    def test_single_arm_normalization_clamps_to_one_through_thirty_two(self) -> None:
         concurrency = load_module(SCRIPTS / "eval_concurrency.py", "eval_concurrency_test_single")
         self.assertEqual(concurrency.normalize_jobs(0, target_count=1, balanced=False), 1)
         self.assertEqual(concurrency.normalize_jobs(8, target_count=1, balanced=False), 8)
-        self.assertEqual(concurrency.normalize_jobs(99, target_count=1, balanced=False), 20)
+        self.assertEqual(concurrency.normalize_jobs(99, target_count=1, balanced=False), 32)
 
     def test_balanced_normalization_uses_complete_arm_groups(self) -> None:
         concurrency = load_module(SCRIPTS / "eval_concurrency.py", "eval_concurrency_test_balanced")
         self.assertEqual(concurrency.normalize_jobs(8, target_count=2, balanced=True), 8)
         self.assertEqual(concurrency.normalize_jobs(8, target_count=3, balanced=True), 6)
         self.assertEqual(concurrency.normalize_jobs(1, target_count=3, balanced=True), 3)
-        self.assertEqual(concurrency.normalize_jobs(99, target_count=3, balanced=True), 18)
+        self.assertEqual(concurrency.normalize_jobs(99, target_count=2, balanced=True), 32)
+        self.assertEqual(concurrency.normalize_jobs(99, target_count=3, balanced=True), 30)
         with self.assertRaisesRegex(ValueError, "exceeds the jobs cap"):
-            concurrency.normalize_jobs(20, target_count=21, balanced=True)
+            concurrency.normalize_jobs(32, target_count=33, balanced=True)
 
     def test_synchronized_wave_propagates_worker_failure_without_end_barrier(self) -> None:
         from eval_core import scheduling

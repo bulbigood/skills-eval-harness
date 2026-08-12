@@ -13,7 +13,7 @@ This three-arm comparative suite verifies how an agent routes documentation work
 - Scenarios may override `iwe_root`, `iwe_documents`, and `iwe_language` through `agents_context`.
 - Guidance bytes and activation are included in resource accounting.
 - Samples: 10 per arm and scenario.
-- Concurrency: four jobs per available physical CPU core, capped at 20 and rounded down to a complete three-arm group.
+- Concurrency: four jobs per available physical CPU core, capped at 32 and rounded down to a complete three-arm group (at most 30 active jobs).
 
 ## Arms
 
@@ -49,7 +49,7 @@ An independent judge scores task correctness, scenario compliance, skill complia
 | --- | --- | --- |
 | `--agent {codex,claude}` | `codex` | Selects workers and judges for every arm. `codex` uses the `weak` model profile; `claude` uses the `medium` model profile. |
 | `--samples N` | `10` | Sets samples per arm and selected scenario. |
-| `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`, then rounds down to a multiple of three; values below three become one complete three-arm group. The final balanced wave may be smaller. |
+| `--jobs N` | `min(physical cores × 4, 32)` | Sets requested concurrency. The runner clamps it to `1..32`, then rounds down to a multiple of three (at most 30 active jobs); values below three become one complete three-arm group. The final balanced wave may be smaller. |
 | `--scenario ID` | all 5 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/iwe-context-routing-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
 | `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |

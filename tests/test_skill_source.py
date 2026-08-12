@@ -17,6 +17,14 @@ if str(SCRIPTS) not in sys.path:
 
 
 class SkillSourceTests(unittest.TestCase):
+    def test_production_default_pins_latest_main_iwe_v18_commit(self) -> None:
+        module = load_module(ROOT / "scripts/skill_source.py", "skill_source_default_test")
+        self.assertEqual(
+            module.DEFAULT_SKILL_SOURCE,
+            "https://github.com/iwe-org/skills/tree/"
+            "f571d6f83dd79407ec64caf7cc3036708062e3c8/skills/iwe-v18",
+        )
+
     def setUp(self) -> None:
         self.module = load_module(ROOT / "scripts/skill_source.py", "skill_source_test")
 
@@ -120,7 +128,7 @@ forbidden_fallbacks = ["grep", "rg", "find"]
                 ["git", "-C", repository, "rev-parse", "HEAD"], text=True
             ).strip()
             parsed = self.module.GitHubSkillURL(
-                repository=str(repository), ref="main", directory="skills/example"
+                repository=str(repository), ref=revision, directory="skills/example"
             )
             with mock.patch.object(self.module, "parse_github_skill_url", return_value=parsed):
                 resolved = self.module.materialize_skill_source(
@@ -139,6 +147,8 @@ forbidden_fallbacks = ["grep", "rg", "find"]
             "scripts/run_iwe_context_routing_ab.py",
         ):
             module = load_module(ROOT / relative, f"source_cli_{Path(relative).stem}")
+            defaults = module.parse_args(["--list"])
+            self.assertEqual(defaults.skill_source, self.module.DEFAULT_SKILL_SOURCE)
             args = module.parse_args(["--skill-source", "/tmp/example", "--list"])
             self.assertEqual(args.skill_source, "/tmp/example")
             with self.assertRaises(SystemExit):

@@ -109,7 +109,7 @@ class IweContextRoutingEvalTests(unittest.TestCase):
         waves = runner.worker_waves(cells, effective_jobs, len(experiment.targets))
         self.assertEqual(len(cells), 150)
         self.assertGreaterEqual(effective_jobs, len(experiment.targets))
-        self.assertLessEqual(effective_jobs, 20)
+        self.assertLessEqual(effective_jobs, 32)
         self.assertEqual(effective_jobs % len(experiment.targets), 0)
         self.assertEqual(sum(map(len, waves)), len(cells))
         for wave in waves:

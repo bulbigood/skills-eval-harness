@@ -9,7 +9,7 @@ from pathlib import Path
 
 JOBS_PER_PHYSICAL_CORE = 4
 MIN_JOBS = 1
-MAX_JOBS = 20
+MAX_JOBS = 32
 
 
 def physical_core_count() -> int:

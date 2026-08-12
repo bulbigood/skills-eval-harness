@@ -13,7 +13,10 @@ from urllib.parse import unquote, urlparse
 from skill_manifest import SkillSpec, load_skills
 
 
-DEFAULT_SKILL_SOURCE = "https://github.com/iwe-org/skills/tree/main/skills/iwe-v18"
+DEFAULT_SKILL_SOURCE = (
+    "https://github.com/iwe-org/skills/tree/"
+    "f571d6f83dd79407ec64caf7cc3036708062e3c8/skills/iwe-v18"
+)
 DEFAULT_SOURCE_CACHE = Path("tests/eval/.cache/skill-source")
 
 
@@ -145,19 +148,26 @@ def materialize_skill_source(
         github = parse_github_skill_url(source)
 
         def clone(staged: Path) -> None:
+            staged.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(staged), "init", "--quiet"], check=True)
             subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--quiet",
-                    "--depth=1",
-                    "--filter=blob:none",
-                    "--sparse",
-                    "--branch",
-                    github.ref,
-                    github.repository,
-                    str(staged),
-                ],
+                ["git", "-C", str(staged), "remote", "add", "origin", github.repository],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staged), "config", "extensions.partialClone", "origin"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staged), "config", "remote.origin.promisor", "true"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staged), "config", "remote.origin.partialCloneFilter", "blob:none"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staged), "sparse-checkout", "init", "--no-cone"],
                 check=True,
             )
             subprocess.run(
@@ -174,6 +184,24 @@ def materialize_skill_source(
                 ],
                 check=True,
             )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(staged),
+                    "fetch",
+                    "--quiet",
+                    "--depth=1",
+                    "--filter=blob:none",
+                    "origin",
+                    github.ref,
+                ],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staged), "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+                check=True,
+            )
 
             _validate_source_links(staged)
 
@@ -181,6 +209,11 @@ def materialize_skill_source(
         revision = subprocess.check_output(
             ["git", "-C", str(destination), "rev-parse", "HEAD"], text=True
         ).strip()
+        if len(github.ref) == 40 and all(character in "0123456789abcdefABCDEF" for character in github.ref):
+            if revision.casefold() != github.ref.casefold():
+                raise RuntimeError(
+                    f"pinned skill source resolved to {revision}, expected {github.ref}"
+                )
         directory = github.directory
     else:
         local_skill = _local_directory(source, root)
