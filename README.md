@@ -2,7 +2,7 @@
 
 ## Evaluation runs
 
-- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the skill directory selected explicitly by each run. [Result: 2026-08-11](docs/evals/results/2026-08-11-iwe-default-skill-eval.md).
+- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the skill directory selected explicitly by each run.
 
 ## A/B test suites
 
