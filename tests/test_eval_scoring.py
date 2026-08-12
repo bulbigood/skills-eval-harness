@@ -1093,6 +1093,18 @@ class EvalScoringContractTests(unittest.TestCase):
                 ["retrieve", "-k", "morality", "-b"],
             ],
         )
+        multiline = (
+            "/bin/bash -lc 'command -v iwe || true\n"
+            "iwe retrieve -k power -b\n"
+            "iwe retrieve -k morality -b'"
+        )
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(multiline),
+            [
+                ["retrieve", "-k", "power", "-b"],
+                ["retrieve", "-k", "morality", "-b"],
+            ],
+        )
 
     def test_efficiency_targets_are_semantic_not_sample_validity_gates(self) -> None:
         scenario = self.scenario

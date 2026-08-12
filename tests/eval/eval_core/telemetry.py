@@ -117,7 +117,8 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
                     body,
                 ).replace("\n", "; "))
             payload = payload[:loop.start()] + "; ".join(expanded_bodies) + payload[loop.end():]
-        lexer = shlex.shlex(payload, posix=True, punctuation_chars=";&|")
+        lexer = shlex.shlex(payload, posix=True, punctuation_chars=";&|\n")
+        lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         lexer.commenters = ""
         tokens = list(lexer)
@@ -128,7 +129,7 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in {";", "&&", "||", "|"}:
+        if token in {";", "&&", "||", "|", "\n"}:
             command_start = True
             index += 1
             continue
@@ -137,7 +138,7 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
             continue
         if command_start and Path(token).name == "iwe":
             end = index + 1
-            while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|"}:
+            while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "\n"}:
                 end += 1
             args = [
                 arg for arg in tokens[index + 1:end]
