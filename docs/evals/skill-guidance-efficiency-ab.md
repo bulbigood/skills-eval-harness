@@ -6,11 +6,11 @@ This paired A/B suite estimates the causal effect of skill guidance relative to 
 
 ## Test conditions
 
-- Source repository: `https://github.com/iwe-org/skills`; the latest `HEAD` is resolved once and recorded by exact commit.
-- Skill selection: `default_skill` from the fetched checkout's `config.toml`.
+- Skill source: a local directory, `file://` URI, or GitHub `/tree/REF/PATH` directory URL.
+- GitHub refs are resolved and recorded as exact commits; local payloads are content-hashed.
 - Both arms use the same IWE CLI binary, version, fixture, request, production `AGENTS.md`, agent, judge, and sample seed.
 - The shared `AGENTS.md` is rendered from `tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl`; it is always present and contains no command fast paths that duplicate the skill.
-- The treatment uses the current upstream default skill; the control sets `skill_mode = "none"`.
+- The treatment uses the skill selected by `--skill-source`; the control sets `skill_mode = "none"`.
 - Shared policy cost, skill activation, and reference reads are included in resource accounting.
 - Scheduling uses balanced paired waves to reduce wall-time bias.
 - Agent/judge profile: `weak` by default.
@@ -21,7 +21,7 @@ This paired A/B suite estimates the causal effect of skill guidance relative to 
 
 | Arm | Condition |
 | --- | --- |
-| Default skill | Production `AGENTS.md`, IWE runtime, and the skill selected by upstream `default_skill`. |
+| Default skill | Production `AGENTS.md`, IWE runtime, and the selected skill. |
 | No skill | The identical production `AGENTS.md` and IWE runtime exposed without skill guidance. |
 
 ## Scenarios
@@ -53,7 +53,7 @@ The no-skill control excludes `tool_efficiency` and `resource_efficiency` only f
 | `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`, then rounds down to an even value; values below two become one complete two-arm group. The final balanced wave may be smaller. |
 | `--scenario ID` | all 3 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/skill-guidance-efficiency-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
-| `--repository URL_OR_PATH` | `https://github.com/iwe-org/skills` | Selects the source repository whose exact `HEAD` and configured `default_skill` are tested. |
+| `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |
 | `--list` | disabled | Resolves the source and prints the selected matrix without worker or judge calls. |
 
 Examples:

@@ -87,15 +87,7 @@ class Experiment:
 def _repo_path(root: Path, value: str, field: str, *, kind: str) -> Path:
     path = (root / value).resolve()
     if not path.is_relative_to(root):
-        config_file = root / "config.toml"
-        allowed = None
-        if config_file.is_file():
-            config = tomllib.loads(config_file.read_text(encoding="utf-8"))
-            configured = config.get("harness", {}).get("skills_repository")
-            if isinstance(configured, str):
-                allowed = (root / configured).resolve()
-        if allowed is None or not path.is_relative_to(allowed):
-            raise ValueError(f"{field} escapes configured repositories: {value}")
+        raise ValueError(f"{field} escapes evaluation repository: {value}")
     valid = path.is_dir() if kind == "directory" else path.is_file()
     if not valid:
         raise ValueError(f"{field} does not exist: {value}")

@@ -7,7 +7,7 @@ This three-arm comparative suite verifies how an agent routes documentation work
 ## Test conditions
 
 - All arms use the same pinned IWE runtime, fixture, request, agent, judge, and sample index.
-- The skill arms use `iwe-v18`; the policy arm adds a rendered workspace `AGENTS.md`.
+- The skill arms use the skill selected by `--skill-source`; the policy arm adds a rendered workspace `AGENTS.md`.
 - The policy is rendered from `tests/eval/guidance/iwe-context-routing.AGENTS.md.tmpl` by `scripts/render_iwe_context_agents.py`.
 - Defaults: IWE root `.`, IWE document scope `project documentation`, authoring language `English`.
 - Scenarios may override `iwe_root`, `iwe_documents`, and `iwe_language` through `agents_context`.
@@ -52,9 +52,10 @@ An independent judge scores task correctness, scenario compliance, skill complia
 | `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`, then rounds down to a multiple of three; values below three become one complete three-arm group. The final balanced wave may be smaller. |
 | `--scenario ID` | all 5 suite scenarios | Restricts the matrix to an exact scenario ID. Repeat to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/iwe-context-routing-ab.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
+| `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |
 | `--list` | disabled | Prints the selected matrix without worker or judge calls. |
 
-This wrapper has no `--repository` option. It reads the external skills checkout from `harness.skills_repository` in `config.toml`; set `IWE_SKILLS_REPOSITORY=/path/to/skills` to override that checkout for one invocation.
+GitHub refs are pinned to exact commits in provenance; local directory payloads are content-hashed.
 
 Examples:
 

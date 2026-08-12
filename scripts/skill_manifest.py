@@ -134,24 +134,8 @@ def _integer(raw: dict, field: str, context: str) -> int:
     return value
 
 
-def resolve_skills_repository(root: Path = ROOT) -> Path:
-    """Resolve the external skills checkout configured by the harness."""
-    root = root.resolve()
-    override = os.environ.get("IWE_SKILLS_REPOSITORY")
-    if override:
-        candidate = Path(override).expanduser()
-        return (root / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
-
-    config_file = root / "config.toml"
-    data = tomllib.loads(config_file.read_text(encoding="utf-8"))
-    harness = data.get("harness")
-    if isinstance(harness, dict) and isinstance(harness.get("skills_repository"), str):
-        return (root / harness["skills_repository"]).resolve()
-    return root
-
-
 def load_skills(root: Path = ROOT) -> tuple[str, dict[str, SkillSpec]]:
-    root = resolve_skills_repository(root)
+    root = root.resolve()
     manifest_file = root / "config.toml"
     data = tomllib.loads(manifest_file.read_text(encoding="utf-8"))
     if data.get("schema_version") != 1:
@@ -402,13 +386,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.json:
-        skills_root = resolve_skills_repository()
-        default_skill, specs = load_skills(skills_root)
+        default_skill, specs = load_skills(ROOT)
         print(json.dumps({
             "schema_version": 1,
             "default_skill": default_skill,
-            "skills_repository": str(skills_root),
-            "skills": [spec.as_json(skills_root) for spec in specs.values()],
+            "skills": [spec.as_json(ROOT) for spec in specs.values()],
         }, separators=(",", ":")))
         return 0
 

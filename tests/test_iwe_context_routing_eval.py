@@ -69,8 +69,11 @@ class IweContextRoutingEvalTests(unittest.TestCase):
             ROOT / "scripts/eval_concurrency.py", "context_eval_concurrency"
         )
         self.assertEqual(module.DEFAULT_JOBS, concurrency.DEFAULT_JOBS)
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
         with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
-            manifest_path = module.write_experiment(root=ROOT)
+            manifest_path = module.write_experiment(root=ROOT, source=source)
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["samples"], 10)
         self.assertEqual(manifest["jobs"], module.DEFAULT_JOBS)
@@ -85,7 +88,7 @@ class IweContextRoutingEvalTests(unittest.TestCase):
         self.assertEqual(manifest["targets"][0]["skill_mode"], "none")
         self.assertNotIn("skill_path", manifest["targets"][0])
         for target in manifest["targets"][1:]:
-            self.assertEqual(target["skill_path"], "../iwe-skills/skills/iwe-v18")
+            self.assertTrue(target["skill_path"].startswith("tests/eval/.cache/"))
             self.assertEqual(target["skill_version"], "0.9.9")
         self.assertNotIn("agents_file", manifest["targets"][1])
         self.assertEqual(
@@ -134,10 +137,14 @@ class IweContextRoutingEvalTests(unittest.TestCase):
         ])
         self.assertEqual(args.samples, 1)
         self.assertEqual(args.scenarios, ["fallback-when-iwe-is-unavailable"])
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
         with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
             manifest_path = module.write_experiment(
                 root=ROOT,
                 samples=1,
+                source=source,
                 scenarios=("fallback-when-iwe-is-unavailable",),
             )
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))

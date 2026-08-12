@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This non-A/B release evaluation verifies that the latest upstream default skill is correct, safe, applicable, evidence-grounded, and efficient across the maintained IWE operation catalog. It answers whether the skill is ready on its own; it does not estimate a treatment effect against another arm.
+This non-A/B release evaluation verifies that the skill directory selected by `--skill-source` is correct, safe, applicable, evidence-grounded, and efficient across the maintained IWE operation catalog. It answers whether the skill is ready on its own; it does not estimate a treatment effect against another arm.
 
 ## Test conditions
 
-- Source repository: `https://github.com/iwe-org/skills`.
-- Source revision: the repository's latest `HEAD`, resolved once and checked out by exact commit before matrix construction.
-- Skill selection: `default_skill` from that checkout's `config.toml`; no skill name is hard-coded.
+- Skill source: a local directory, `file://` URI, or GitHub `/tree/REF/PATH` directory URL.
+- Source revision: local payloads are content-hashed; GitHub refs are resolved and recorded as exact commits before matrix construction.
+- Skill selection: the exact directory passed through `--skill-source`; repository roots are rejected.
 - Runtime: the CLI and tested version declared for that selected skill in `config.toml`.
 - Agent/judge profile: `weak` by default.
 - Samples: 10 independent samples per scenario.
@@ -19,7 +19,7 @@ This non-A/B release evaluation verifies that the latest upstream default skill 
 
 ## Target
 
-There is one target: the upstream default skill, its declared IWE runtime, and the always-present production `AGENTS.md` policy. The generated manifest records the repository URL, exact commit, selected skill, skill version, contract file, runtime version, and injected-policy provenance.
+There is one target: the selected skill, its declared IWE runtime, and the always-present production `AGENTS.md` policy. The generated manifest records the source URL/path, immutable revision or payload hash, selected skill, skill version, contract file, runtime version, and injected-policy provenance.
 
 ## Scenarios
 
@@ -76,7 +76,7 @@ Each sample is run by an isolated worker and evaluated by an independent judge. 
 | `--jobs N` | `min(physical cores × 4, 20)` | Sets requested concurrency. The runner clamps it to `1..20`; this single-arm suite needs no arm-group adjustment. |
 | `--scenario ID` | all 31 suite scenarios | Restricts the run to one exact scenario ID. Repeat the option to select multiple scenarios. |
 | `--results-file PATH` | `tests/eval/results/iwe-default-skill-eval.md` | Sets the generated Markdown result path. Raw immutable reports remain under `tests/eval/reports/`. |
-| `--repository URL_OR_PATH` | `https://github.com/iwe-org/skills` | Selects the skills repository. Its latest `HEAD` is resolved once, checked out by exact revision, and its `config.toml` supplies `default_skill`. |
+| `--skill-source SOURCE` | GitHub URL for `iwe-v18` | Selects one skill directory as a local path, `file://` URI, or GitHub `/tree/REF/PATH` URL. Repository roots are rejected. |
 | `--list` | disabled | Resolves the source and prints the exact selected matrix without worker or judge calls. |
 
 Examples:

@@ -1808,7 +1808,9 @@ class EvalScoringContractTests(unittest.TestCase):
 
     def test_judge_is_forbidden_from_using_iwe_as_correctness_oracle(self) -> None:
         prompt = self.runner.judge_prompt(
-            self.runner.load_skill(root=ROOT),
+            self.runner.materialize_skill_source(
+                ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+            ).skill,
             self.scenario,
             {"metrics": {}, "iwe_telemetry": [], "commands": [], "final": "[]"},
             {},
@@ -1819,7 +1821,9 @@ class EvalScoringContractTests(unittest.TestCase):
 
     def test_judge_prompt_declares_included_guidance_accounting(self) -> None:
         prompt = self.runner.judge_prompt(
-            self.runner.load_skill(root=ROOT),
+            self.runner.materialize_skill_source(
+                ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+            ).skill,
             self.scenario,
             {"metrics": {}, "iwe_telemetry": [], "commands": [], "final": "[]"},
             {},

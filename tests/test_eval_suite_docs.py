@@ -106,11 +106,9 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
                 ):
                     self.assertIn(f"`{parameter}`", text)
                 self.assertIn("--agent claude", text)
-                if relative.endswith((
-                    "default-skill-correctness-efficiency.md",
-                    "skill-guidance-efficiency-ab.md",
-                )):
-                    self.assertIn("`--repository URL_OR_PATH`", text)
+                self.assertIn("`--skill-source SOURCE`", text)
+                self.assertIn("file://", text)
+                self.assertIn("/tree/REF/PATH", text)
                 self.assertTrue("## Target" in text or "## Arms" in text)
                 for scenario_id in scenario_ids:
                     self.assertIn(f"`{scenario_id}`", text)

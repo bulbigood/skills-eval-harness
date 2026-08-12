@@ -1,8 +1,5 @@
 schema_version = 1
 
-[harness]
-skills_repository = "../iwe-skills"
-
 [eval.score_scale]
 "5" = "Excellent: all requirements are met and there are no material shortcomings."
 "4" = "Good: the task is complete with only a minor shortcoming."

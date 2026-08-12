@@ -11,6 +11,14 @@ from tests.eval_test_support import ROOT, load_eval_module, load_module, load_ru
 
 
 class ExperimentManifestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        module = load_module(ROOT / "scripts/skill_source.py", "manifest_skill_source")
+        module.materialize_skill_source(
+            ROOT,
+            str(ROOT.parent / "iwe-skills/skills/iwe-v18"),
+        )
+
     def test_loads_two_target_manifest_with_target_local_runtimes(self) -> None:
         experiment_module = load_eval_module("experiment")
         experiment = experiment_module.load_experiment(
@@ -32,7 +40,7 @@ class ExperimentManifestTests(unittest.TestCase):
 [[targets]]
 id = "iwe-no-skill"
 skill_mode = "none"
-contract_file = "../iwe-skills/contracts/iwe-v18.json"
+contract_file = "tests/eval/.cache/skill-source/contracts/iwe-v18.json"
 [targets.runtime]
 cli = "iwe"
 source = "directory"
@@ -308,8 +316,12 @@ version = "0.18.0"
                 json.dumps({"schema_version": 1, "cli_line": "0.18", "commands": {"find": {}}}),
                 encoding="utf-8",
             )
-            manifest = source.replace("../iwe-skills/skills/iwe-v18", str((root / "skill").relative_to(ROOT))).replace(
-                "../iwe-skills/contracts/iwe-v18.json", str((root / "contract.json").relative_to(ROOT))
+            manifest = source.replace(
+                "tests/eval/.cache/skill-source/skills/iwe-v18",
+                str((root / "skill").relative_to(ROOT)),
+            ).replace(
+                "tests/eval/.cache/skill-source/contracts/iwe-v18.json",
+                str((root / "contract.json").relative_to(ROOT)),
             )
             path = root / "experiment.toml"
             path.write_text(manifest, encoding="utf-8")
@@ -334,6 +346,8 @@ version = "0.18.0"
             sys.executable,
             str(ROOT / "tests/eval/run.py"),
             "--list",
+            "--skill-source",
+            str(ROOT.parent / "iwe-skills/skills/iwe-v18"),
             "--model-profile",
             "weak",
         ], cwd=ROOT, text=True, capture_output=True, check=False)
@@ -343,6 +357,7 @@ version = "0.18.0"
     def test_single_skill_list_output_exposes_id_and_display_name(self) -> None:
         completed = subprocess.run([
             sys.executable, str(ROOT / "tests/eval/run.py"), "--list",
+            "--skill-source", str(ROOT.parent / "iwe-skills/skills/iwe-v18"),
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         first = completed.stdout.splitlines()[0]
@@ -352,7 +367,13 @@ version = "0.18.0"
         )
 
     def test_cli_scenario_selector_accepts_only_exact_ids(self) -> None:
-        command = [sys.executable, str(ROOT / "tests/eval/run.py"), "--list"]
+        command = [
+            sys.executable,
+            str(ROOT / "tests/eval/run.py"),
+            "--list",
+            "--skill-source",
+            str(ROOT.parent / "iwe-skills/skills/iwe-v18"),
+        ]
         selected = subprocess.run(
             command + ["--scenario", "query-structured-metadata-without-scanning-files"],
             cwd=ROOT, text=True, capture_output=True, check=False,

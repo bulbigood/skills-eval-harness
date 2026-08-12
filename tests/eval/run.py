@@ -18,7 +18,8 @@ EVAL = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(EVAL))
 
-from skill_manifest import load_skill, verify_runtime_binary
+from skill_manifest import verify_runtime_binary
+from skill_source import DEFAULT_SKILL_SOURCE, materialize_skill_source
 from experiment import load_experiment
 from eval_concurrency import DEFAULT_JOBS, normalize_jobs  # type: ignore[import-not-found]
 from eval_core.config import DIMENSIONS, EvalConfig, ModelProfile, load_eval_config, resolve_agent_model_profile, resolve_model_profile
@@ -272,7 +273,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--skill", help="skill id from the root config.toml")
+    mode.add_argument(
+        "--skill-source",
+        default=DEFAULT_SKILL_SOURCE,
+        help="local/file:// or GitHub directory URL for one skill",
+    )
     mode.add_argument("--experiment", type=Path, help="paired experiment TOML")
     parser.add_argument("--scenario", action="append", metavar="ID", help="exact scenario id (repeatable)")
     parser.add_argument(
@@ -304,7 +309,8 @@ def main() -> int:
         if args.experiment
         else None
     )
-    skill = None if experiment else load_skill(args.skill)
+    source = None if experiment else materialize_skill_source(ROOT, args.skill_source)
+    skill = None if source is None else source.skill
     config_name = experiment.agent_judge_config if experiment else (args.config or args.agent)
     config_path = EVAL / "configs" / f"{config_name}.json"
     config = load_agent_config(config_path)

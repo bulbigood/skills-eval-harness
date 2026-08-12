@@ -126,12 +126,15 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(module.COMPARISON_METRICS, (
             "tool_efficiency", "resource_efficiency",
         ))
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
         with mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")):
             manifest_path = module.write_experiment(
                 root=ROOT,
                 jobs=module.DEFAULT_JOBS,
                 agent="codex",
-                source_root=ROOT,
+                source=source,
             )
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["samples"], 10)
@@ -208,11 +211,15 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         with mock.patch.object(
             module, "CACHE", Path(temporary_cache.name).relative_to(ROOT)
         ):
-            manifest_path = module.write_experiment(1, ROOT, source_root=ROOT)
+            source = module.materialize_skill_source(
+                ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+            )
+            manifest_path = module.write_experiment(1, ROOT, source=source)
         manifest_text = manifest_path.read_text(encoding="utf-8")
         manifest = tomllib.loads(manifest_text)
-        self.assertIn('# source_repository = "https://github.com/iwe-org/skills"', manifest_text)
-        self.assertIn('# default_skill = "iwe-v18"', manifest_text)
+        self.assertIn('# skill_source = ', manifest_text)
+        self.assertIn('# selected_skill = "iwe-v18"', manifest_text)
+        self.assertIn('# source_payload_sha256 = ', manifest_text)
         self.assertEqual(tuple(manifest["scenarios"]), expected)
         self.assertEqual(manifest["name"], "iwe-default-skill-correctness-efficiency")
         self.assertEqual(manifest["jobs"], module.DEFAULT_JOBS)
@@ -231,77 +238,40 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True, check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("target iwe-v18: ../iwe-skills/skills/iwe-v18 @ IWE 0.18.0 (directory)", completed.stdout)
+        self.assertIn("target iwe-v18: tests/eval/.cache/", completed.stdout)
+        self.assertIn("@ IWE 0.18.0 (directory)", completed.stdout)
         self.assertNotIn("iwe-memory-system", completed.stdout)
         self.assertNotIn("iwe-no-skill", completed.stdout)
 
 
-    def test_default_skill_eval_uses_configured_iwe_v18(self) -> None:
+    def test_default_skill_eval_uses_selected_iwe_v18_directory(self) -> None:
         module = load_module(ROOT / "scripts/run_default_skill_eval.py", "run_iwe_skill_ab_eval")
-        targets = module.load_targets(ROOT)
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
+        targets = module.load_targets(source)
         self.assertEqual(targets[0].skill_id, "iwe-v18")
         self.assertEqual(targets[0].skill_version, "0.9.9")
         self.assertEqual(targets[0].iwe_version, "0.18.0")
         self.assertEqual(targets[0].runtime_skill_id, "iwe-v18")
         self.assertEqual(len(targets), 1)
 
-    def test_default_skill_eval_follows_default_skill_from_config(self) -> None:
+    def test_default_skill_eval_uses_the_explicit_directory_not_manifest_default(self) -> None:
         module = load_module(ROOT / "scripts/run_default_skill_eval.py", "run_default_skill_dynamic")
-        configured = mock.Mock()
-        configured.name = "future-default"
-        configured.path = Path("skills/future-default")
-        configured.skill_version = "2.0.0"
-        configured.tested_version = "0.19.0"
-        configured.contract_file = Path("contracts/future-default.json")
-        with mock.patch.object(
-            module,
-            "load_skills",
-            return_value=("future-default", {"future-default": configured}),
-        ):
-            targets = module.load_targets(ROOT)
-        self.assertEqual(targets[0].skill_id, "future-default")
-        self.assertEqual(targets[0].runtime_skill_id, "future-default")
-
-    def test_default_skill_eval_materializes_latest_upstream_head(self) -> None:
-        module = load_module(
-            ROOT / "scripts/run_default_skill_eval.py",
-            "run_default_skill_upstream",
+        source = module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
         )
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
-            upstream = base / "upstream"
-            subprocess.run(
-                ["git", "init", "-q", "-b", "main", str(upstream)], check=True
-            )
-            subprocess.run(
-                ["git", "-C", str(upstream), "config", "user.email", "eval@example.test"],
-                check=True,
-            )
-            subprocess.run(
-                ["git", "-C", str(upstream), "config", "user.name", "Eval Test"],
-                check=True,
-            )
-            (upstream / "marker.txt").write_text("latest\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "-C", str(upstream), "add", "marker.txt"], check=True
-            )
-            subprocess.run(
-                ["git", "-C", str(upstream), "commit", "-q", "-m", "latest"],
-                check=True,
-            )
-            expected = subprocess.check_output(
-                ["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True
-            ).strip()
-            checkout = module.materialize_upstream_checkout(base / "cache", str(upstream))
-            self.assertEqual(checkout.revision, expected)
-            self.assertEqual((checkout.root / "marker.txt").read_text(), "latest\n")
+        targets = module.load_targets(source)
+        self.assertEqual(targets[0].skill_id, source.skill.name)
+        self.assertEqual(targets[0].runtime_skill_id, source.skill.name)
 
     def test_default_skill_eval_generates_the_linked_markdown_results(self) -> None:
         module = load_module(ROOT / "scripts/run_default_skill_eval.py", "run_default_skill_eval_report")
         args = module.parse_args([])
         self.assertEqual(args.agent, "codex")
 
-        self.assertEqual(args.repository, "https://github.com/iwe-org/skills")
+        self.assertEqual(args.skill_source, module.DEFAULT_SKILL_SOURCE)
+        self.assertFalse(hasattr(args, "repository"))
         self.assertEqual(module.parse_args(["--agent", "claude"]).agent, "claude")
         cache_parent = ROOT / "tests/eval/.cache"
         cache_parent.mkdir(parents=True, exist_ok=True)
@@ -311,8 +281,11 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
                 mock.patch.object(module, "CACHE", cache_path),
                 mock.patch.object(module, "verify_runtime_binary", return_value=Path("/bin/true")),
             ):
+                source = module.materialize_skill_source(
+                    ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+                )
                 manifest = module.write_experiment(
-                    1, root=ROOT, jobs=1, agent="claude", source_root=ROOT
+                    1, root=ROOT, jobs=1, agent="claude", source=source
                 )
             self.assertIn(
                 'agent_judge_config = "claude"',
@@ -653,7 +626,9 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
             manifest_path = module.write_experiment(
                 root=ROOT,
                 samples=1,
-                source_root=ROOT,
+                source=module.materialize_skill_source(
+                    ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+                ),
                 scenarios=("ambiguous-discovery-with-one-follow-up",),
             )
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))

@@ -13,14 +13,11 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
-from skill_manifest import load_skills, verify_runtime_binary
+from skill_manifest import verify_runtime_binary
+from skill_source import DEFAULT_SKILL_SOURCE, ResolvedSkillSource, materialize_skill_source
 from eval_suite_membership import DEFAULT_SKILL_SCENARIOS, validate_membership
 from eval_concurrency import DEFAULT_JOBS
 from eval_suite_runner import atomic_write_text, build_eval_command, positive_int, run_eval
-from upstream_default_skill import (
-    UPSTREAM_REPOSITORY,
-    materialize_upstream_checkout,
-)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,9 +67,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="shared agent implementation for tested runs and judges (default: codex)",
     )
     parser.add_argument(
-        "--repository",
-        default=UPSTREAM_REPOSITORY,
-        help=f"skills repository whose latest HEAD is evaluated (default: {UPSTREAM_REPOSITORY})",
+        "--skill-source",
+        default=DEFAULT_SKILL_SOURCE,
+        help=(
+            "skill directory: local path, file:// URI, or GitHub "
+            f"directory URL (default: {DEFAULT_SKILL_SOURCE})"
+        ),
     )
     parser.add_argument(
         "--scenario",
@@ -88,9 +88,8 @@ def load_scenario_ids(root: Path = ROOT) -> tuple[str, ...]:
     return validate_membership(root, DEFAULT_SKILL_SCENARIOS)
 
 
-def load_targets(root: Path = ROOT) -> tuple[Target, ...]:
-    default_skill, skills = load_skills(root)
-    current = skills[default_skill]
+def load_targets(source: ResolvedSkillSource) -> tuple[Target, ...]:
+    current = source.skill
     return (
         Target(
             current.name,
@@ -109,20 +108,13 @@ def write_experiment(
     jobs: int = DEFAULT_JOBS,
     agent: str = "codex",
     *,
-    source_root: Path | None = None,
-    source_revision: str | None = None,
-    source_repository: str = UPSTREAM_REPOSITORY,
+    source: ResolvedSkillSource | None = None,
+    skill_source: str = DEFAULT_SKILL_SOURCE,
     scenarios: tuple[str, ...] | None = None,
 ) -> Path:
-    if source_root is None:
-        checkout = materialize_upstream_checkout(root, source_repository)
-        source_root = checkout.root
-        source_revision = checkout.revision
-    source_root = source_root.resolve()
-    if not source_root.is_relative_to(root.resolve()):
-        raise ValueError(f"skill source must be inside the evaluation repository: {source_root}")
-    default_skill, skills = load_skills(source_root)
-    targets = load_targets(source_root)
+    source = source or materialize_skill_source(root, skill_source)
+    current = source.skill
+    targets = load_targets(source)
     available_scenarios = load_scenario_ids(root)
     scenario_ids = scenarios or available_scenarios
     unknown = set(scenario_ids) - set(available_scenarios)
@@ -130,9 +122,10 @@ def write_experiment(
         raise ValueError(f"unknown default-skill scenarios: {sorted(unknown)}")
     cache = (root / CACHE).resolve()
     lines = [
-        f"# source_repository = {json.dumps(source_repository)}",
-        f"# source_revision = {json.dumps(source_revision or 'working-tree')}",
-        f"# default_skill = {json.dumps(default_skill)}",
+        f"# skill_source = {json.dumps(source.source)}",
+        f"# source_revision = {json.dumps(source.revision)}",
+        f"# source_payload_sha256 = {json.dumps(source.payload_sha256)}",
+        f"# selected_skill = {json.dumps(current.name)}",
         "schema_version = 1",
         'name = "iwe-default-skill-correctness-efficiency"',
         f"agent_judge_config = {json.dumps(agent)}",
@@ -142,7 +135,7 @@ def write_experiment(
         f"jobs = {jobs}",
     ]
     for target in targets:
-        runtime_spec = skills[target.runtime_skill_id]
+        runtime_spec = current
         binary = verify_runtime_binary(runtime_spec)
         runtime = cache / "runtimes" / target.skill_id
         runtime.mkdir(parents=True, exist_ok=True)
@@ -194,15 +187,13 @@ def build_command(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    checkout = materialize_upstream_checkout(ROOT, args.repository)
-    print(f"Evaluating {args.repository} at {checkout.revision}")
+    source = materialize_skill_source(ROOT, args.skill_source)
+    print(f"Evaluating {args.skill_source} at {source.revision}")
     manifest = write_experiment(
         args.samples,
         jobs=args.jobs,
         agent=args.agent,
-        source_root=checkout.root,
-        source_revision=checkout.revision,
-        source_repository=args.repository,
+        source=source,
         scenarios=tuple(args.scenarios) if args.scenarios else None,
     )
     return run_eval(

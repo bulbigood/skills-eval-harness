@@ -78,6 +78,10 @@ class EvalConcurrencyTests(unittest.TestCase):
     def test_balanced_waves_allow_a_smaller_complete_final_wave(self) -> None:
         runner = load_runner()
         experiment_module = load_eval_module("experiment")
+        source_module = load_module(SCRIPTS / "skill_source.py", "concurrency_skill_source")
+        source_module.materialize_skill_source(
+            ROOT, str(ROOT.parent / "iwe-skills/skills/iwe-v18")
+        )
         manifest = ROOT / "tests/eval/experiments/example.toml"
         experiment = experiment_module.load_experiment(manifest, ROOT)
         scenarios = runner.select_scenarios(runner.load_scenarios(), list(experiment.scenario_ids))
