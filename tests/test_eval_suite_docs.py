@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -53,6 +54,13 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
         )
         for link in expected_links:
             self.assertEqual(text.count(f"]({link})"), 1)
+        report_links = re.findall(r"\[Evidence report\]\((docs/evals/results/[^)]+\.md)\)", text)
+        self.assertEqual(
+            report_links,
+            ["docs/evals/results/default-skill-correctness-efficiency-f571d6f.md"],
+        )
+        for link in report_links:
+            self.assertTrue((ROOT / link).is_file())
         for retired_term in (
             "preinject",
             "inject optimization",
@@ -112,6 +120,36 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
                 self.assertTrue("## Target" in text or "## Arms" in text)
                 for scenario_id in scenario_ids:
                     self.assertIn(f"`{scenario_id}`", text)
+
+        publication = (ROOT / "docs/evals/default-skill-correctness-efficiency.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("scripts/publish_eval_report.py", publication)
+        for parameter in (
+            "--run",
+            "--manifest",
+            "--report",
+            "--output",
+            "--harness-commit",
+            "--replace",
+        ):
+            self.assertIn(parameter, publication)
+
+    def test_published_reports_are_explicitly_selected_and_pin_source_identity(self) -> None:
+        reports = sorted((ROOT / "docs/evals/results").glob("*.md"))
+        self.assertEqual(
+            [path.name for path in reports],
+            ["default-skill-correctness-efficiency-f571d6f.md"],
+        )
+        for report in reports:
+            text = report.read_text(encoding="utf-8")
+            self.assertIn("## Evaluated source", text)
+            self.assertRegex(
+                text,
+                r"https://github\.com/[^\s)]+/tree/[0-9a-f]{40}/",
+            )
+            self.assertRegex(text, r"Harness commit: `[0-9a-f]{40}`")
+            self.assertIn("Overall suite verdict: **PASS**", text)
 
 
 if __name__ == "__main__":

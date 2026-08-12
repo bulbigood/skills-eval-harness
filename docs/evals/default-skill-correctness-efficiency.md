@@ -100,7 +100,27 @@ For a bounded smoke run, set one sample and repeat `--scenario` for the five rep
 uv run --with-requirements tests/eval/requirements.txt python scripts/run_default_skill_eval.py --samples 1 --jobs 5 --scenario discover-and-retrieve-bounded-multi-hop-context --scenario apply-a-guarded-structured-block-update --scenario refuse-an-unbounded-destructive-request --scenario fallback-when-iwe-is-unavailable --scenario fix-code-without-activating-iwe
 ```
 
-The generated manifest is stored under `tests/eval/.cache/iwe-default-skill-eval/`; a new Markdown result defaults to `tests/eval/results/iwe-default-skill-eval.md`. Generated results are intentionally untracked.
+The generated manifest is stored under `tests/eval/.cache/iwe-default-skill-eval/`; a new Markdown result defaults to `tests/eval/results/iwe-default-skill-eval.md`. Generated results and raw telemetry are intentionally untracked. A reviewed result may be copied to `docs/evals/results/` as a selected, immutable evidence report whose header pins the tested source repository, source commit, payload hashes, and harness commit. The root README links only such selected reports.
+
+### Publish a selected report
+
+Publication is a separate deterministic step after a complete green production run. Do not publish smoke, partial, invalid, or aggregate-failing runs. Pass the exact generated manifest and Markdown report from the same run:
+
+```bash
+uv run --with-requirements tests/eval/requirements.txt python scripts/publish_eval_report.py \
+  --run tests/eval/reports/RUN_ID-iwe-default-skill-correctness-efficiency \
+  --manifest tests/eval/.cache/iwe-default-skill-eval/experiment.toml \
+  --report tests/eval/results/iwe-default-skill-eval.md \
+  --output docs/evals/results/default-skill-correctness-efficiency-SOURCE_SHA_PREFIX.md
+```
+
+The publisher fails closed unless the raw matrix is complete and unique, every sample is valid, every aggregate row passes, the source URL pins the full source commit, and source payload provenance is present. It records the harness `HEAD`, source identity, payload and `AGENTS.md` hashes, run ID, and matrix cardinality. Private raw-telemetry links are replaced with retention notes rather than publishing prompts, transcripts, workspace data, or local paths.
+
+For a historical run made by another harness commit, pass its exact existing commit with `--harness-commit COMMIT`. Existing publications are immutable by default; `--replace` is required to overwrite one. The command writes the selected report only. Review its diff, then update the root README and this document's **Published evidence** link in the same commit. Git commit and push remain explicit operator actions.
+
+## Published evidence
+
+- [IWE v18 at `f571d6f83dd79407ec64caf7cc3036708062e3c8`](results/default-skill-correctness-efficiency-f571d6f.md) — 31 scenarios × 10 samples, PASS.
 
 ## Matrix and model cost
 

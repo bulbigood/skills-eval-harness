@@ -25,7 +25,8 @@ htmlcov/
 /tmp*/
 
 # Generated evaluation caches, reports, and runtime artifacts.
-docs/evals/results/
+docs/evals/results/*
+!docs/evals/results/*.md
 tests/eval/.cache/
 tests/eval/reports/
 tests/eval/results/
