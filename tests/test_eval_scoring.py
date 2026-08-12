@@ -1105,6 +1105,17 @@ class EvalScoringContractTests(unittest.TestCase):
                 ["retrieve", "-k", "morality", "-b"],
             ],
         )
+        conditional = (
+            "/bin/bash -lc 'if command -v iwe >/dev/null; then "
+            "iwe retrieve -k power -b; iwe retrieve -k morality -b; fi'"
+        )
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(conditional),
+            [
+                ["retrieve", "-k", "power", "-b"],
+                ["retrieve", "-k", "morality", "-b"],
+            ],
+        )
 
     def test_efficiency_targets_are_semantic_not_sample_validity_gates(self) -> None:
         scenario = self.scenario

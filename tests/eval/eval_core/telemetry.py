@@ -129,7 +129,7 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in {";", "&&", "||", "|", "\n"}:
+        if token in {";", "&&", "||", "|", "\n", "then", "do", "else"}:
             command_start = True
             index += 1
             continue
@@ -138,7 +138,9 @@ def _observed_iwe_invocations(command: str) -> list[list[str]]:
             continue
         if command_start and Path(token).name == "iwe":
             end = index + 1
-            while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "\n"}:
+            while end < len(tokens) and tokens[end] not in {
+                ";", "&&", "||", "|", "\n", "then", "do", "else", "fi", "done"
+            }:
                 end += 1
             args = [
                 arg for arg in tokens[index + 1:end]
@@ -318,12 +320,17 @@ def command_metrics(
         command = str(item.get("command", ""))
         output = str(item.get("output", ""))
         item_invocations = _observed_iwe_invocations(command)
+        payload = _command_payload(command)
+        standalone_iwe = (
+            len(item_invocations) == 1
+            and not re.search(r"[;&|\n]|\b(?:if|then|else|fi|for|do|done)\b", payload)
+        )
         observed_invocations.extend(item_invocations)
         observed_details.extend(
             (
-                output if len(item_invocations) == 1 else "",
+                output if standalone_iwe else "",
                 int(item["exit_code"])
-                if item.get("exit_code") is not None and len(item_invocations) == 1
+                if item.get("exit_code") is not None and standalone_iwe
                 else None,
             )
             for _ in item_invocations
