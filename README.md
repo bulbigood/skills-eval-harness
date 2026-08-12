@@ -2,7 +2,8 @@
 
 ## Evaluation runs
 
-- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the skill directory selected explicitly by each run. [Evidence report](docs/evals/results/default-skill-correctness-efficiency-f571d6f.md).
+- [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md) — verifies the correctness, safety, applicability, evidence quality, and efficiency of the skill directory selected explicitly by each run.
+- **Published evidence:** [IWE v18 at `f571d6f83dd79407ec64caf7cc3036708062e3c8`](docs/evals/results/default-skill-correctness-efficiency-f571d6f.md) — 31 scenarios × 10 samples, PASS.
 
 ## A/B test suites
 

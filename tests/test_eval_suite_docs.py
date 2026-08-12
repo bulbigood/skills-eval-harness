@@ -54,13 +54,18 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
         )
         for link in expected_links:
             self.assertEqual(text.count(f"]({link})"), 1)
-        report_links = re.findall(r"\[Evidence report\]\((docs/evals/results/[^)]+\.md)\)", text)
+        report_links = re.findall(
+            r"\[IWE v18 at `f571d6f83dd79407ec64caf7cc3036708062e3c8`\]"
+            r"\((docs/evals/results/[^)]+\.md)\)",
+            text,
+        )
         self.assertEqual(
             report_links,
             ["docs/evals/results/default-skill-correctness-efficiency-f571d6f.md"],
         )
         for link in report_links:
             self.assertTrue((ROOT / link).is_file())
+        self.assertIn("- **Published evidence:**", text)
         for retired_term in (
             "preinject",
             "inject optimization",
