@@ -49,6 +49,20 @@ version = "0.18.0"
         self.assertIsNone(target.skill_path)
         self.assertIsNone(target.skill_version)
 
+    def test_aggregate_exclusions_reject_unknown_target(self) -> None:
+        experiment_module = load_eval_module("experiment")
+        source = (ROOT / "tests/eval/experiments/example.toml").read_text(encoding="utf-8")
+        source = source.replace(
+            "[[targets]]",
+            'aggregate_metric_exclusions_by_target = { missing = ["tool_efficiency"] }\n\n[[targets]]',
+            1,
+        )
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / "experiment.toml"
+            path.write_text(source, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unknown targets.*missing"):
+                experiment_module.load_experiment(path, ROOT)
+
     def test_matrix_is_complete_paired_and_deterministic(self) -> None:
         runner = load_runner()
         experiment = load_eval_module("experiment").load_experiment(

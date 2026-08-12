@@ -40,6 +40,8 @@ The treatment and control receive byte-identical fixture copies. Fixture-derived
 
 Correctness, scenario compliance, skill compliance, safety, and evidence quality remain quality gates for both arms. The A/B decision compares `tool_efficiency` and `resource_efficiency`, including activation cost. Reports include paired pass-rate deltas, tool calls, token/resource usage, worker duration, and bootstrap timing summaries. A speedup is accepted only when quality and safety do not regress; faster wrong answers remain, technically speaking, wrong.
 
+The no-skill control excludes `tool_efficiency` and `resource_efficiency` only from its standalone aggregate gate: those are the treatment metrics the experiment is designed to compare. Their raw control scores remain in paired comparison, while correctness, scenario compliance, safety, and evidence quality remain fail-closed for both arms. `skill_compliance` is N/A when no skill is installed.
+
 ## Run
 
 ### Script parameters

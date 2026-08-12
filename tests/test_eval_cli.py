@@ -139,6 +139,10 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         self.assertEqual(manifest["name"], "skill-guidance-efficiency-ab")
         self.assertEqual(tuple(manifest["scenarios"]), module.SCENARIOS)
         self.assertEqual(tuple(manifest["comparison_metrics"]), module.COMPARISON_METRICS)
+        self.assertEqual(
+            manifest["aggregate_metric_exclusions_by_target"],
+            {"iwe-no-skill": ["tool_efficiency", "resource_efficiency"]},
+        )
         self.assertEqual(manifest["guidance_accounting"], "include_activation")
         self.assertEqual(manifest["worker_scheduling"], "balanced_waves")
         self.assertEqual([target["id"] for target in manifest["targets"]], [
@@ -158,6 +162,14 @@ class PairedSkillEvalCommandTests(unittest.TestCase):
         experiment = load_eval_module("experiment").load_experiment(manifest_path, ROOT)
         self.assertEqual(experiment.guidance_accounting, "include_activation")
         self.assertEqual(experiment.worker_scheduling, "balanced_waves")
+        self.assertEqual(
+            experiment.aggregate_metric_exclusions_by_target,
+            {"iwe-no-skill": frozenset({"tool_efficiency", "resource_efficiency"})},
+        )
+        self.assertEqual(
+            experiment.aggregate_exclusions_for("iwe-no-skill"),
+            frozenset({"skill_compliance", "tool_efficiency", "resource_efficiency"}),
+        )
         scenarios = [
             scenario for scenario in load_runner().load_scenarios()
             if scenario.id in experiment.scenario_ids

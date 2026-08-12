@@ -70,10 +70,18 @@ class Experiment:
     agent_judge_config: str
     comparison_metrics: tuple[str, ...] | None
     metric_exclusions: dict[str, frozenset[str]]
+    aggregate_metric_exclusions_by_target: dict[str, frozenset[str]]
     guidance_accounting: str
     skill_activation: str
     worker_scheduling: str
     targets: tuple[EvalTarget, ...]
+
+    def aggregate_exclusions_for(self, target_id: str) -> frozenset[str]:
+        target = next(target for target in self.targets if target.id == target_id)
+        automatic = {"skill_compliance"} if not target.has_skill else set()
+        return frozenset(automatic | set(
+            self.aggregate_metric_exclusions_by_target.get(target_id, frozenset())
+        ))
 
 
 def _repo_path(root: Path, value: str, field: str, *, kind: str) -> Path:
@@ -124,6 +132,13 @@ def load_experiment(
     ids = [item["id"] for item in document["targets"]]
     if len(ids) != len(set(ids)):
         raise ValueError("target ids must be unique")
+    aggregate_exclusions = document.get("aggregate_metric_exclusions_by_target", {})
+    unknown_aggregate_targets = set(aggregate_exclusions) - set(ids)
+    if unknown_aggregate_targets:
+        raise ValueError(
+            "aggregate metric exclusions reference unknown targets: "
+            f"{sorted(unknown_aggregate_targets)}"
+        )
 
     scenario_file = scenario_file or EVAL / "scenarios/iwe.eval.yaml"
     available_scenarios = {
@@ -191,6 +206,7 @@ def load_experiment(
                       document["jobs"], document["agent_judge_config"],
                       tuple(comparison_metrics) if comparison_metrics is not None else None,
                       {scenario: frozenset(metrics) for scenario, metrics in document.get("metric_exclusions", {}).items()},
+                      {target: frozenset(metrics) for target, metrics in aggregate_exclusions.items()},
                       document.get("guidance_accounting", "exclude_activation"),
                       document.get("skill_activation", "scenario"),
                       document.get("worker_scheduling", "streaming"),

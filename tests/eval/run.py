@@ -411,15 +411,19 @@ def main() -> int:
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(jobs, len(tasks))) as executor:
             results = list(executor.map(execute, tasks))
-    excluded_dimensions_by_target = {
+    comparison_exclusions_by_target = {
         target.id: ({"skill_compliance"} if not target.has_skill else set())
+        for target in experiment.targets
+    } if experiment else {}
+    aggregate_exclusions_by_target = {
+        target.id: set(experiment.aggregate_exclusions_for(target.id))
         for target in experiment.targets
     } if experiment else {}
     outcomes = aggregate_results(
         results,
         eval_config,
         expected_samples=samples,
-        excluded_dimensions_by_target=excluded_dimensions_by_target,
+        excluded_dimensions_by_target=aggregate_exclusions_by_target,
         excluded_dimensions_by_scenario=experiment.metric_exclusions if experiment else None,
         model_profile=model_profile,
     )
@@ -456,7 +460,7 @@ def main() -> int:
             tuple(target.id for target in experiment.targets),
             experiment.comparison_metrics or DIMENSIONS,
             expected_pairs,
-            excluded_dimensions_by_target=excluded_dimensions_by_target,
+            excluded_dimensions_by_target=comparison_exclusions_by_target,
             excluded_dimensions_by_scenario=experiment.metric_exclusions,
         )
         summary["comparisons"] = comparisons
@@ -472,6 +476,10 @@ def main() -> int:
             "metric_exclusions": {
                 scenario: sorted(metrics)
                 for scenario, metrics in experiment.metric_exclusions.items()
+            },
+            "aggregate_metric_exclusions_by_target": {
+                target: sorted(metrics)
+                for target, metrics in experiment.aggregate_metric_exclusions_by_target.items()
             },
             "guidance_accounting": experiment.guidance_accounting,
             "skill_activation": experiment.skill_activation,

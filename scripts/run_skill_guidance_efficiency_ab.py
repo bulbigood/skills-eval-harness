@@ -106,6 +106,7 @@ def write_experiment(
         f"agent_judge_config = {json.dumps(agent)}",
         f"scenarios = {json.dumps(scenario_ids)}",
         f"comparison_metrics = {json.dumps(COMPARISON_METRICS)}",
+        'aggregate_metric_exclusions_by_target = { iwe-no-skill = ["tool_efficiency", "resource_efficiency"] }',
         'guidance_accounting = "include_activation"',
         'worker_scheduling = "balanced_waves"',
         f"samples = {samples}",
