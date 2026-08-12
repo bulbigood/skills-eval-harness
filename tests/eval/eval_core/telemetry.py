@@ -101,25 +101,22 @@ def _normalize_ansi_c_quotes(command: str) -> str:
 def _observed_iwe_invocations(command: str) -> list[list[str]]:
     try:
         payload = _normalize_ansi_c_quotes(_command_payload(command))
-        payload = re.sub(r"(?<!\S)(?:\d*>>?\s*\S+|\d*<<?\s*\S+|\d*>&\d+|&>\s*\S+)", "", payload)
+        payload = re.sub(r"(?<!\S)(?:\d*>&\d+|&>\s*\S+|\d*>>?\s*\S+|\d*<<?\s*\S+)", "", payload)
         payload = re.sub(r"\n\s*done\s*$", "; done", payload)
-        loop = re.fullmatch(
-            r"\s*(?:set\s+-o\s+pipefail\s*[;\n]\s*)?for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+?)\s*;\s*do\s+(.*?)\s*[;\n]?\s*done\s*",
-            payload,
+        loop_pattern = re.compile(
+            r"for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([^;\n]+?)\s*;\s*do\s+(.*?)\s*[;\n]?\s*done",
             re.DOTALL,
         )
-        if loop:
+        while (loop := loop_pattern.search(payload)) is not None:
             variable, raw_values, body = loop.groups()
-            values = shlex.split(raw_values)
-            invocations: list[list[str]] = []
-            for value in values:
-                expanded = re.sub(
+            expanded_bodies = []
+            for value in shlex.split(raw_values):
+                expanded_bodies.append(re.sub(
                     rf"\$\{{{re.escape(variable)}\}}|\${re.escape(variable)}\b",
                     shlex.quote(value),
                     body,
-                ).replace("\n", "; ")
-                invocations.extend(_observed_iwe_invocations(expanded))
-            return invocations
+                ).replace("\n", "; "))
+            payload = payload[:loop.start()] + "; ".join(expanded_bodies) + payload[loop.end():]
         lexer = shlex.shlex(payload, posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
         lexer.commenters = ""
@@ -374,10 +371,19 @@ def command_metrics(
         ]
         metrics["iwe_telemetry_missing"] = max(len(observed_invocations) - len(telemetry), 0)
         metrics["iwe_telemetry_extra"] = max(len(telemetry) - len(observed_invocations), 0)
-        metrics["iwe_telemetry_mismatch"] = int(observed_invocations != telemetry_invocations)
+        metrics["iwe_telemetry_mismatch"] = int(
+            sorted(observed_invocations) != sorted(telemetry_invocations)
+        )
         telemetry_valid = not metrics["iwe_telemetry_mismatch"]
         if telemetry_valid:
-            for item, (observed_output, observed_exit) in zip(telemetry, observed_details, strict=True):
+            detail_queues: dict[tuple[str, ...], list[tuple[str, int | None]]] = {}
+            for invocation, detail in zip(observed_invocations, observed_details, strict=True):
+                detail_queues.setdefault(tuple(invocation), []).append(detail)
+            telemetry_details = [
+                detail_queues[tuple(invocation)].pop(0)
+                for invocation in telemetry_invocations
+            ]
+            for item, (observed_output, observed_exit) in zip(telemetry, telemetry_details, strict=True):
                 stdout = item.get("stdout")
                 stderr = item.get("stderr")
                 result_count = item.get("result_count")
@@ -401,7 +407,10 @@ def command_metrics(
                         or observed_output.endswith(stdout + stderr)
                         or observed_output.endswith(stderr + stdout)
                     )
-                    and result_count == _json_list_count(stdout)
+                    and (
+                        result_count is None
+                        or result_count == _json_list_count(stdout)
+                    )
                     and (observed_exit is None or exit_code == observed_exit)
                     and (
                         raw_bytes == emitted_bytes

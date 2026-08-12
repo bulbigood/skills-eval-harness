@@ -1084,6 +1084,15 @@ class EvalScoringContractTests(unittest.TestCase):
                 ["find", "--refs-from", "morality", "-f", "keys"],
             ],
         )
+        prefixed = "/bin/bash -lc 'iwe --help; for k in power morality; do iwe retrieve -k $k -b; done'"
+        self.assertEqual(
+            self.runner._observed_iwe_invocations(prefixed),
+            [
+                ["--help"],
+                ["retrieve", "-k", "power", "-b"],
+                ["retrieve", "-k", "morality", "-b"],
+            ],
+        )
 
     def test_efficiency_targets_are_semantic_not_sample_validity_gates(self) -> None:
         scenario = self.scenario
@@ -1371,6 +1380,15 @@ class EvalScoringContractTests(unittest.TestCase):
         self.assertEqual(metrics["iwe_telemetry_invalid"], 0)
         self.assertEqual(metrics["iwe_telemetry_mismatch"], 0)
         self.assertEqual(metrics["iwe_calls"], 2)
+        reversed_metrics = self.runner.command_metrics(
+            [
+                {"command": "iwe retrieve --key a --limit 1 --format json", "exit_code": 0, "output": outputs[0]},
+                {"command": "iwe retrieve --key b --limit 1 --format json", "exit_code": 0, "output": outputs[1]},
+            ],
+            list(reversed(telemetry)),
+        )
+        self.assertEqual(reversed_metrics["iwe_telemetry_mismatch"], 0)
+        self.assertEqual(reversed_metrics["iwe_telemetry_invalid"], 0)
 
     def test_ansi_c_quoted_unicode_matches_iwe_telemetry(self) -> None:
         content = "Заголовок — решение\nТекст на русском."
