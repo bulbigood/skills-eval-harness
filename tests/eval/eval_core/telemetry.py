@@ -1,7 +1,6 @@
 """Command telemetry normalization and deterministic procedure gates."""
 from __future__ import annotations
 
-import codecs
 import json
 import re
 import shlex
@@ -43,6 +42,31 @@ def _command_payload(command: str) -> str:
         return tokens[2]
     return command
 
+def _decode_ansi_c_escapes(raw: str) -> str:
+    """Decode Bash ANSI-C escapes without re-decoding literal Unicode text."""
+    escape = re.compile(
+        r"\\(?:[abefnrtv\\'\"?]|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{4}|"
+        r"U[0-9a-fA-F]{8}|[0-7]{1,3})"
+    )
+    named = {
+        "a": "\a", "b": "\b", "e": "\x1b", "f": "\f", "n": "\n",
+        "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'",
+        '"': '"', "?": "?",
+    }
+
+    def decode_match(match: re.Match[str]) -> str:
+        token = match.group(0)[1:]
+        if token[0] in named:
+            return named[token[0]]
+        if token[0] == "x":
+            return chr(int(token[1:], 16))
+        if token[0] in {"u", "U"}:
+            return chr(int(token[1:], 16))
+        return chr(int(token, 8))
+
+    return escape.sub(decode_match, raw)
+
+
 def _normalize_ansi_c_quotes(command: str) -> str:
     """Convert Bash ``$'...'`` words into POSIX-shell-quoted equivalents."""
     normalized: list[str] = []
@@ -67,7 +91,7 @@ def _normalize_ansi_c_quotes(command: str) -> str:
             return command
         raw = command[index + 2:end]
         try:
-            decoded = codecs.decode(raw, "unicode_escape")
+            decoded = _decode_ansi_c_escapes(raw)
         except UnicodeDecodeError:
             return command
         normalized.append(shlex.quote(decoded))

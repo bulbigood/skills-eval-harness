@@ -1324,6 +1324,28 @@ class EvalScoringContractTests(unittest.TestCase):
         self.assertEqual(metrics["iwe_telemetry_mismatch"], 0)
         self.assertEqual(metrics["iwe_calls"], 2)
 
+    def test_ansi_c_quoted_unicode_matches_iwe_telemetry(self) -> None:
+        content = "Заголовок — решение\nТекст на русском."
+        command = (
+            "/bin/bash -lc \"iwe create decisions/example --content "
+            "$'Заголовок — решение\\nТекст на русском.' --strict\""
+        )
+        telemetry = [{
+            "args": ["create", "decisions/example", "--content", content, "--strict"],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "stdout_bytes": 0,
+            "emitted_stdout_bytes": 0,
+            "stderr_bytes": 0,
+            "result_count": None,
+        }]
+        metrics = self.runner.command_metrics(
+            [{"command": command, "exit_code": 0, "output": ""}], telemetry
+        )
+        self.assertEqual(metrics["iwe_telemetry_mismatch"], 0)
+        self.assertEqual(metrics["iwe_calls"], 1)
+
     def test_create_postcondition_accepts_typed_attendee_list_rendered_by_runtime(self) -> None:
         scenario = next(
             item
