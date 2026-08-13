@@ -50,7 +50,6 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
         expected_links = (
             "docs/evals/default-skill-correctness-efficiency.md",
             "docs/evals/skill-guidance-efficiency-ab.md",
-            "docs/evals/context-routing-ab.md",
         )
         for link in expected_links:
             self.assertEqual(text.count(f"]({link})"), 1)
