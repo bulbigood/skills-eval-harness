@@ -61,7 +61,10 @@ class EvalSuiteDocumentationTests(unittest.TestCase):
         )
         self.assertEqual(
             report_links,
-            ["docs/evals/results/default-skill-correctness-efficiency-f571d6f.md"],
+            [
+                "docs/evals/results/default-skill-correctness-efficiency-f571d6f.md",
+                "docs/evals/results/skill-guidance-efficiency-ab-f571d6f.md",
+            ],
         )
         for link in report_links:
             self.assertTrue((ROOT / link).is_file())
