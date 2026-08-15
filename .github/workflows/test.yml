@@ -1,4 +1,4 @@
-name: Test evaluation harness
+name: Test Harbor evaluation harness
 
 on:
   pull_request:
@@ -14,18 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
-          path: skills-eval-harness
-      - uses: actions/checkout@v6
-        with:
-          repository: iwe-org/skills
-          path: iwe-skills
+          version: "0.12.1"
+          enable-cache: true
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: skills-eval-harness/tests/eval/requirements.txt
-      - run: pip install -r tests/eval/requirements.txt
-        working-directory: skills-eval-harness
-      - run: python -m unittest tests.test_eval_scoring tests.test_eval_suite_docs tests.test_iwe_context_routing_eval
-        working-directory: skills-eval-harness
+      - run: uv sync --locked --all-groups
+      - run: uv run skills-eval validate
+      - run: uv run ruff check src tests
+      - run: uv run pytest
+      - run: uv run python -m compileall -q src tests

@@ -1,7 +1,0 @@
-{
-  "name": "claude",
-  "agent_command": "claude --bare -p --output-format stream-json --verbose --model sonnet --effort low --tools Bash --permission-mode bypassPermissions --no-session-persistence",
-  "judge_command": "claude --bare -p --output-format json --model opus --effort low --tools '' --no-session-persistence --json-schema {judge_schema_json}",
-  "timeout_seconds": 1800,
-  "samples": 1
-}
