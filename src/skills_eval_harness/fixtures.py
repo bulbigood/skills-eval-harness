@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -64,3 +65,52 @@ def validate_fixture_roots(
             raise ValueError(f"fixture source is not the clean canonical revision: {name}")
         result[name] = {"repository": _canonical_url(str(source.repository)), "commit": commit, "tree": tree}
     return result
+
+
+def materialize_fixture(source: Path, destination: Path, fixture_name: str) -> None:
+    if destination.exists():
+        raise FileExistsError(destination)
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".git"))
+    if fixture_name == "pkm-demo-api-project":
+        path = destination / "graph/api-integration.md"
+        path.write_text(
+            "---\ntype: project\n---\n\n" + path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        return
+    if fixture_name != "pkm-demo-core-read":
+        return
+    graph = destination / "graph"
+    (graph / "core-alpha.md").write_text(
+        "---\ntype: project\npriority: 2\n---\n\n# Core Alpha\n\n"
+        "Coordinates the release.\n\n[Core Beta](core-beta.md)\n",
+        encoding="utf-8",
+    )
+    (graph / "core-beta.md").write_text(
+        "---\ntype: note\npriority: 1\n---\n\n# Core Beta\n\n"
+        "Records the direct implementation checklist.\n",
+        encoding="utf-8",
+    )
+    (graph / "core-gamma.md").write_text(
+        "---\ntype: project\npriority: 3\n---\n\n# Core Gamma\n\n"
+        "Tracks the higher-priority migration. The rollout uses staged cutovers and rollback "
+        "checkpoints under the blue-lantern handoff.\n",
+        encoding="utf-8",
+    )
+    config = destination / ".iwe/config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + '\n[schemas.core]\nmatch = "core-*"\n',
+        encoding="utf-8",
+    )
+    schemas = destination / ".iwe/schemas"
+    schemas.mkdir(parents=True, exist_ok=True)
+    (schemas / "core.yaml").write_text(
+        "$schema: https://document-schema.org/draft/2026-06/schema\n"
+        "frontmatter:\n"
+        "  type: object\n"
+        "  required: [type, priority]\n"
+        "  properties:\n"
+        "    type: { type: string }\n"
+        "    priority: { type: number }\n",
+        encoding="utf-8",
+    )

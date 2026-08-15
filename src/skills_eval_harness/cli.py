@@ -17,7 +17,12 @@ from harbor.models.job.result import TrialResult
 
 from .bundle import validate_run_bundle
 from .dataset import generate_dataset, scenario_map
-from .fixtures import fixture_source_name, load_fixture_sources, validate_fixture_roots
+from .fixtures import (
+    fixture_source_name,
+    load_fixture_sources,
+    materialize_fixture,
+    validate_fixture_roots,
+)
 from .hashing import (
     atomic_write_json,
     harbor_content_sha256,
@@ -189,9 +194,12 @@ def prepare(args: argparse.Namespace) -> Path:
     registry = load_fixture_sources(FIXTURE_SOURCES)
     required_fixtures = {catalog[scenario_id]["fixture"] for scenario_id in suite.scenarios}
     fixture_sources = validate_fixture_roots(fixtures, required_fixtures, FIXTURE_SOURCES)
-    resolved_fixtures = {
-        name: fixtures[fixture_source_name(name, registry)] for name in required_fixtures
-    }
+    resolved_fixtures: dict[str, Path] = {}
+    for name in sorted(required_fixtures):
+        source_name = fixture_source_name(name, registry)
+        destination = inputs / "materialized-fixtures" / name
+        materialize_fixture(Path(fixtures[source_name]).resolve(), destination, name)
+        resolved_fixtures[name] = destination
     shutil.copy2(runtime, inputs / "runtime")
     shutil.copytree(source.skill_root, inputs / "selected-skill", ignore=shutil.ignore_patterns(".git"))
     materialize_git_identity(
