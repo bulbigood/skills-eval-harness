@@ -17,7 +17,7 @@ from harbor.models.job.result import TrialResult
 
 from .dataset import generate_dataset, scenario_map
 from .hashing import atomic_write_json, canonical_json, harbor_task_sha256, sha256_bytes, sha256_file
-from .judge import build_evidence
+from .judge import build_evidence, build_judge_messages
 from .judge_client import judge_cell
 from .models import load_config, load_suite
 from .provenance import Provenance, seal_run, verify_harbor_lock, verify_materialized
@@ -31,6 +31,7 @@ from .security import (
 )
 from .source import resolve_skill, verify_runtime
 from .results import trial_evidence, validate_job, write_summary
+from .telemetry import TelemetryRecorder
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "evals/config.yaml"
@@ -104,6 +105,14 @@ def prepare(args: argparse.Namespace) -> Path:
     fixtures = dict(args.fixture)
     source = resolve_skill(args.skill_source, Path(args.cache).resolve() / "skills")
     output = Path(args.output).resolve()
+    inputs = output / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(CONFIG, inputs / "config.yaml")
+    shutil.copy2(SCENARIOS, inputs / "scenario-catalog.yaml")
+    shutil.copy2(suite_path, inputs / "suite.yaml")
+    atomic_write_json(inputs / "effective-suite.json", suite.model_dump(mode="json"))
+    if agents_template is not None:
+        (inputs / "AGENTS.md").write_bytes(agents_template)
     datasets: dict[str, Path] = {}
     for arm in suite.arms:
         dataset = generate_dataset(
@@ -244,6 +253,8 @@ def run(args: argparse.Namespace) -> Path:
     if missing_credentials:
         raise RuntimeError(f"missing required credential environment names: {sorted(missing_credentials)}")
     run_root = prepare(args)
+    telemetry = TelemetryRecorder(run_root / "device-telemetry.json")
+    telemetry.start()
     manifest = json.loads((run_root / "run-manifest.json").read_text(encoding="utf-8"))
     provenance = Provenance.model_validate(manifest["provenance"]).validated()
     materialized = manifest["materialized"]
@@ -396,6 +407,12 @@ def run(args: argparse.Namespace) -> Path:
                 "n_cache_tokens": n_cache,
                 "n_output_tokens": n_output,
                 "cost_usd": cost,
+                "evidence": [item.model_dump(mode="json") for item in evidence],
+                "judge_messages": build_judge_messages(
+                    scenario=catalog[scenario_id],
+                    evidence=evidence,
+                    scale={"minimum": 0, "maximum": 5},
+                ),
                 "verdict": verdict.model_dump(mode="json"),
             }
             cells.append(cell)
@@ -410,6 +427,7 @@ def run(args: argparse.Namespace) -> Path:
             treatment_arm=treatment_arm,
             pipeline_elapsed_seconds=time.monotonic() - run_started,
         )
+        telemetry.stop()
         seal_run(run_root)
         return run_root
 

@@ -53,7 +53,9 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 ### Global concurrency
 
-`execution.global_concurrency` defaults to `4`. `--jobs N` overrides it for one run. The value is a global Harbor trial ceiling, not a per-arm allowance: paired arms run concurrently with an equal static share (`2 + 2` at the default). An odd spare slot remains unused rather than biasing one arm. If the limit is smaller than the arm count, arms run in deterministic one-slot batches. The resolved allocation is recorded in `run-manifest.json`.
+`execution.global_concurrency` defaults to `2`. `--jobs N` overrides it for one run. The value is a global Harbor trial ceiling, not a per-arm allowance: paired arms run concurrently with an equal static share (`1 + 1` at the default). An odd spare slot remains unused rather than biasing one arm. If the limit is smaller than the arm count, arms run in deterministic one-slot batches. The resolved allocation is recorded in `run-manifest.json`.
+
+Successful runs produce schema-constrained `device-telemetry.json` containing numeric capacity and load measurements only. Publication validates and seals that file, copies every sealed report/evidence input into a sibling `.evidence` directory, and stages the report, checksum, telemetry, cells, Harbor locks/results, trajectories, verifier evidence, manifests, and seal with `git add`. Publication fails closed if telemetry contains unexpected fields such as hostnames, paths, commands, labels, network identifiers, or credential material.
 
 ## Suites
 

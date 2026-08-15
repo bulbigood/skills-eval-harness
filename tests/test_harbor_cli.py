@@ -27,15 +27,15 @@ def test_codex_auth_cli_supports_api_key_and_explicit_chatgpt_modes(capsys: pyte
     assert "--jobs JOBS" in help_text
 
 
-def test_global_concurrency_defaults_to_four_and_can_be_overridden() -> None:
+def test_global_concurrency_defaults_to_two_and_can_be_overridden() -> None:
     config = load_config(ROOT / "evals/config.yaml")
     args = parser().parse_args([
         "run", "--suite", "suite.yaml", "--skill-source", "skill", "--runtime", "iwe",
         "--runtime-version", "0.18.0", "--fixture", "fixture=.", "--output", "out",
     ])
-    assert config.execution.global_concurrency == 4
+    assert config.execution.global_concurrency == 2
     assert args.jobs is None
-    assert _resolve_global_concurrency(args.jobs, config) == 4
+    assert _resolve_global_concurrency(args.jobs, config) == 2
     assert _resolve_global_concurrency(6, config) == 6
     with pytest.raises(ValueError, match="global concurrency"):
         _resolve_global_concurrency(0, config)

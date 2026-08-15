@@ -36,5 +36,5 @@ judge:
   timeout_seconds: 300
 execution:
   timeout_seconds: 1800
-  global_concurrency: 4
+  global_concurrency: 2
   retries: 0

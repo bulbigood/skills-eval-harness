@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from skills_eval_harness.publish import publish
+from skills_eval_harness.hashing import sha256_file
 from skills_eval_harness.provenance import Provenance, seal_run
+from skills_eval_harness.telemetry import validate_device_telemetry
 
 
 SHA = "a" * 64
@@ -48,8 +50,36 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": True, "expected_cells": 1, "observed_cells": 1}))
     (run / "provenance.json").write_text(provenance().model_dump_json())
     (run / "run-manifest.json").write_text("{}")
-    (run / "jobs/job").mkdir(parents=True)
+    (run / "jobs/job/trial/agent").mkdir(parents=True)
+    (run / "jobs/job/trial/verifier").mkdir(parents=True)
     (run / "jobs/job/lock.json").write_text("{}")
+    (run / "jobs/job/result.json").write_text("{}")
+    (run / "jobs/job/trial/agent/trajectory.json").write_text("{}")
+    (run / "jobs/job/trial/verifier/mechanical.json").write_text("{}")
+    (run / "jobs/job/trial/verifier/workspace-manifest.json").write_text("{}")
+    (run / "jobs/job/trial/verifier/test-stdout.txt").write_text("ok")
+    (run / "jobs/job/trial/verifier/test-stderr.txt").write_text("")
+    (run / "inputs").mkdir()
+    for name in ("config.yaml", "scenario-catalog.yaml", "suite.yaml", "effective-suite.json"):
+        (run / "inputs" / name).write_text("{}")
+    (run / "datasets/arm/task/tests").mkdir(parents=True)
+    (run / "datasets/arm/task/task.toml").write_text("version = '1.0'")
+    (run / "datasets/arm/task/instruction.md").write_text("task")
+    (run / "datasets/arm/task/tests/verify.py").write_text("print('ok')")
+    (run / "cells").mkdir()
+    (run / "cells/arm--scenario--1.json").write_text(json.dumps({
+        "evidence": [{"id": "E0001", "kind": "oracle", "text": "fact"}],
+        "judge_messages": [{"role": "system", "content": "judge"}, {"role": "user", "content": "evidence"}],
+        "verdict": {"dimensions": []},
+    }))
+    (run / "device-telemetry.json").write_text(json.dumps({
+        "schema_version": 1,
+        "started_unix_ms": 1000,
+        "finished_unix_ms": 2000,
+        "host": {"logical_cpus": 2, "total_memory_bytes": 4096, "total_swap_bytes": 0, "docker_metrics_available": True},
+        "samples": [{"elapsed_ms": 0, "cpu_percent": 25.0, "load1": 0.5, "mem_available_bytes": 2048, "swap_free_bytes": 0, "running_containers": 2}],
+        "docker_oom_events": 0,
+    }))
     seal_run(run)
     return root, run
 
@@ -63,6 +93,19 @@ def test_publisher_derives_pass_and_canonical_repository(tmp_path: Path) -> None
     assert "https://github.com/iwe-org/skills-eval-harness" in text
     assert "bulbigood" not in text
     assert output.with_suffix(".md.sha256").is_file()
+    evidence = root / "published.evidence"
+    assert (evidence / "summary.json").is_file()
+    assert (evidence / "cells/arm--scenario--1.json").is_file()
+    assert (evidence / "jobs/job/lock.json").is_file()
+    assert (evidence / "device-telemetry.json").is_file()
+    seal = json.loads((run / "run-seal.json").read_text())
+    assert all(
+        (evidence / relative).is_file() and sha256_file(evidence / relative) == digest
+        for relative, digest in seal["files"].items()
+    )
+    assert (evidence / "run-seal.json").is_file()
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root, text=True, capture_output=True, check=True).stdout.splitlines()
+    assert set(staged) >= {"published.md", "published.md.sha256", "published.evidence/summary.json", "published.evidence/device-telemetry.json"}
 
 
 def test_publisher_rejects_failed_incomplete_dirty_or_overwrite(tmp_path: Path) -> None:
@@ -89,3 +132,15 @@ def test_publisher_rejects_tampered_sealed_artifact(tmp_path: Path) -> None:
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": False, "expected_cells": 1, "observed_cells": 1}))
     with pytest.raises(ValueError, match="sealed artifact mismatch"):
         publish(root=root, run_dir=run, output=root / "published.md")
+
+
+def test_device_telemetry_rejects_sensitive_or_unexpected_fields(tmp_path: Path) -> None:
+    _, run = setup(tmp_path)
+    telemetry = run / "device-telemetry.json"
+    payload = json.loads(telemetry.read_text())
+    validate_device_telemetry(telemetry)
+    payload["host"]["hostname"] = "private-runner-01"
+    telemetry.write_text(json.dumps(payload))
+    seal_run(run)
+    with pytest.raises(ValueError, match="device telemetry"):
+        validate_device_telemetry(telemetry)

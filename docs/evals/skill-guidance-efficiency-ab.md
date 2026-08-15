@@ -37,10 +37,10 @@ uv run skills-eval run \
   --samples 1
 ```
 
-The smoke uses the configured global concurrency limit of `4`, split evenly across the paired arms. `--jobs N` overrides that global ceiling; it is never multiplied by the arm count.
+The smoke uses the configured global concurrency limit of `2`, split evenly as `1 + 1` across the paired arms. `--jobs N` overrides that global ceiling; it is never multiplied by the arm count.
 
 Run the same bounded smoke with `--agent claude` before expanding the matrix. Full runs are paid and should follow smoke repair cycles.
 
 ## Provenance and publication
 
-The run records exact source and harness commits, content hashes for source tree, selected skill, runtime, suite, scenario catalog and config, Harbor task checksums, image digests, and Harbor version. Publication rejects dirty, incomplete, invalid, failing, mismatched, or already-published inputs. There is no compatibility path for old TOML manifests or old host-process reports.
+The run records exact source and harness commits, content hashes for source tree, selected skill, runtime, suite, scenario catalog and config, Harbor task checksums, image digests, Harbor version, and sanitized numeric device telemetry. Publication rejects dirty, incomplete, invalid, failing, mismatched, sensitive-telemetry, or already-published inputs. It stages the report plus a complete sealed evidence bundle in Git. There is no compatibility path for old TOML manifests or old host-process reports.

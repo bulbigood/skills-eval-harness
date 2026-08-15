@@ -117,15 +117,51 @@ def verify_harbor_lock(provenance: Provenance, lock: dict) -> None:
 
 def seal_run(run_dir: Path) -> dict[str, object]:
     """Hash every publishable result and Harbor lock; the seal excludes itself."""
-    roots = [run_dir / "provenance.json", run_dir / "run-manifest.json", run_dir / "summary.json"]
+    roots = [
+        run_dir / "provenance.json",
+        run_dir / "run-manifest.json",
+        run_dir / "summary.json",
+        run_dir / "device-telemetry.json",
+    ]
     roots.extend(sorted((run_dir / "cells").glob("*.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/lock.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/result.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/trajectory.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/workspace-manifest.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/mechanical.json")))
+    roots.extend(sorted((run_dir / "jobs").glob("**/test-stdout.txt")))
+    roots.extend(sorted((run_dir / "jobs").glob("**/test-stderr.txt")))
+    roots.extend(sorted(path for path in (run_dir / "inputs").glob("**/*") if path.is_file()))
+    roots.extend(
+        sorted(
+            path
+            for path in (run_dir / "datasets").glob("**/*")
+            if path.is_file() and ".git" not in path.parts and "payload" not in path.parts
+        )
+    )
     files = {str(path.relative_to(run_dir)): sha256_file(path) for path in roots if path.is_file()}
-    if "provenance.json" not in files or "run-manifest.json" not in files or "summary.json" not in files or not any(name.endswith("/lock.json") for name in files):
+    required = {
+        "provenance.json",
+        "run-manifest.json",
+        "summary.json",
+        "device-telemetry.json",
+        "inputs/config.yaml",
+        "inputs/scenario-catalog.yaml",
+        "inputs/suite.yaml",
+        "inputs/effective-suite.json",
+    }
+    required_suffixes = (
+        "/lock.json",
+        "/result.json",
+        "/trajectory.json",
+        "/workspace-manifest.json",
+        "/mechanical.json",
+        "/test-stdout.txt",
+        "/test-stderr.txt",
+        "/task.toml",
+        "/instruction.md",
+    )
+    if not required.issubset(files) or any(not any(name.endswith(suffix) for name in files) for suffix in required_suffixes):
         raise ValueError("cannot seal incomplete run")
     seal: dict[str, object] = {"schema_version": 1, "files": files}
     atomic_write_json(run_dir / "run-seal.json", seal)
