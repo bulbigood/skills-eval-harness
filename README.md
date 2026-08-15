@@ -6,7 +6,7 @@ This repository evaluates IWE agent skills with [Harbor](https://github.com/harb
 
 - Worker output is untrusted evidence, never prompt instructions.
 - Judge responses are validated locally with a strict Pydantic/JSON schema.
-- Every metric requires a rationale and one or more valid evidence IDs.
+- Every metric requires a non-whitespace rationale and one or more unique, valid evidence IDs.
 - Worker and verifier sandboxes use explicit network policies.
 - Only the selected agent provider credential is forwarded. Host credential files are never copied.
 - Published reports are derived from complete machine-readable summaries and content-bound provenance.
@@ -49,7 +49,7 @@ uv run skills-eval run ... \
 
 The source file must be owned by the current user, regular JSON, non-symlinked, no larger than 1 MiB, and mode `0600` or stricter. The harness copies it to a private generic temporary path, and Harbor uploads it to `/tmp/codex-secrets`. Both layers clean up in `finally`; Harbor also uses a disposable environment. A hard process or daemon crash can still leave an orphaned container, so subscription-auth runs belong only on a trusted private runner. The source path, credential bytes, and credential digest are never added to datasets, provenance, reports, or run seals.
 
-`--judge-auth chatgpt` runs the structured judge through an ephemeral, read-only Codex CLI sandbox using a separate temporary copy of the same explicitly selected login. `--judge-auth api-key` preserves the Responses API backend and requires `OPENAI_API_KEY`. Both backends feed the same strict local schema and evidence-reference validator. Claude workers continue to require `ANTHROPIC_API_KEY`.
+`--judge-auth chatgpt` runs the structured judge through an ephemeral, read-only Codex CLI sandbox using a separate temporary copy of the same explicitly selected login. The credential home is mounted outside the judge-visible `/work` directory, and the harness rejects every unknown JSONL lifecycle event or item type as well as any tool-use item before accepting a verdict. `--judge-auth api-key` preserves the Responses API backend and requires `OPENAI_API_KEY`. Both backends feed the same strict local schema and evidence-reference validator. Claude workers continue to require `ANTHROPIC_API_KEY`.
 
 ### Concurrency
 

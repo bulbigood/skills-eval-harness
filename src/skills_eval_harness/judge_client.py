@@ -38,6 +38,7 @@ def _codex_judge_command(
     bwrap: Path,
     node_root: Path,
     workspace: Path,
+    codex_home: Path,
     model: str,
     reasoning: str,
 ) -> list[str]:
@@ -94,7 +95,7 @@ def _codex_judge_command(
             str(workspace),
             "/work",
             "--bind",
-            str(workspace / "codex-home"),
+            str(codex_home),
             "/codex-home",
             "--setenv",
             "PATH",
@@ -146,6 +147,8 @@ def _codex_judge_command(
 def _reject_tool_events(stdout: str) -> None:
     if not stdout.strip():
         raise ValueError("Codex judge emitted empty JSONL")
+    allowed_events = {"thread.started", "turn.started", "item.started", "item.completed", "turn.completed"}
+    item_events = {"item.started", "item.completed"}
     allowed_items = {"reasoning", "agent_message"}
     for line in stdout.splitlines():
         try:
@@ -154,11 +157,19 @@ def _reject_tool_events(stdout: str) -> None:
             raise ValueError("Codex judge emitted malformed JSONL") from exc
         if not isinstance(event, dict):
             raise ValueError("Codex judge emitted malformed JSONL event")
-        if event.get("type") == "error":
+        event_type = event.get("type")
+        if event_type == "error":
             raise ValueError("Codex judge emitted an error event")
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") not in allowed_items:
-            raise ValueError(f"Codex judge attempted tool use: {item.get('type')!r}")
+        if event_type not in allowed_events:
+            raise ValueError(f"Codex judge emitted unknown event type: {event_type!r}")
+        if event_type in item_events:
+            item = event.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+                raise ValueError("Codex judge emitted malformed item event")
+            if item["type"] not in allowed_items:
+                raise ValueError(f"Codex judge attempted tool use: {item['type']!r}")
+        elif "item" in event:
+            raise ValueError("Codex judge emitted malformed item on a lifecycle event")
 
 
 def _codex_installation() -> tuple[Path, Path]:
@@ -216,9 +227,11 @@ def judge_cell_chatgpt(
 ) -> JudgeVerdict:
     bwrap, node_root = _codex_installation()
     payload = _read_private_auth(auth_json)
-    workspace = Path(tempfile.mkdtemp(prefix="skills-eval-judge-"))
-    workspace.chmod(0o700)
-    codex_home = workspace / "codex-home"
+    temporary_root = Path(tempfile.mkdtemp(prefix="skills-eval-judge-"))
+    temporary_root.chmod(0o700)
+    workspace = temporary_root / "work"
+    workspace.mkdir(mode=0o700)
+    codex_home = temporary_root / "codex-home"
     codex_home.mkdir(mode=0o700)
     auth_target = codex_home / "auth.json"
     try:
@@ -235,6 +248,7 @@ def judge_cell_chatgpt(
             bwrap=bwrap,
             node_root=node_root,
             workspace=workspace,
+            codex_home=codex_home,
             model=config.judge.model,
             reasoning=config.judge.reasoning,
         )
@@ -255,7 +269,7 @@ def judge_cell_chatgpt(
             raise ValueError("Codex subscription judge did not produce a bounded regular verdict")
         return validate_verdict(verdict_path.read_bytes(), evidence)
     finally:
-        shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(temporary_root, ignore_errors=True)
 
 
 def judge_cell(

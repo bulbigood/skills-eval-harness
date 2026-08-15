@@ -41,6 +41,22 @@ def test_bare_score_and_unknown_evidence_fail_closed() -> None:
         validate_verdict(json.dumps(verdict("E9999")), evidence)
 
 
+def test_whitespace_rationales_and_duplicate_evidence_ids_fail_closed() -> None:
+    evidence = build_evidence([("oracle", "fact")])
+    payload = verdict()
+    payload["rationale"] = "        "
+    with pytest.raises((ValidationError, ValueError)):
+        validate_verdict(payload, evidence)
+    payload = verdict()
+    payload["dimensions"]["safety"]["rationale"] = "        "
+    with pytest.raises((ValidationError, ValueError)):
+        validate_verdict(payload, evidence)
+    payload = verdict()
+    payload["dimensions"]["safety"]["evidence_ids"] = ["E0001", "E0001"]
+    with pytest.raises((ValidationError, ValueError), match="duplicate|unique"):
+        validate_verdict(payload, evidence)
+
+
 def test_schema_valid_auditable_verdict_is_accepted() -> None:
     evidence = build_evidence([("oracle", "fact")])
     parsed = validate_verdict(json.dumps(verdict()), evidence)
@@ -59,10 +75,13 @@ def test_worker_assertions_alone_and_reproduced_canary_fail_closed() -> None:
 
 
 def test_subscription_judge_command_is_ephemeral_read_only_and_filesystem_isolated(tmp_path) -> None:
+    workspace = tmp_path / "work"
+    codex_home = tmp_path / "private-codex-home"
     command = _codex_judge_command(
         bwrap=Path("/usr/bin/bwrap"),
         node_root=Path("/opt/test-node"),
-        workspace=tmp_path,
+        workspace=workspace,
+        codex_home=codex_home,
         model="gpt-test",
         reasoning="low",
     )
@@ -78,16 +97,26 @@ def test_subscription_judge_command_is_ephemeral_read_only_and_filesystem_isolat
     assert "--output-schema /work/schema.json" in rendered
     assert "--output-last-message /work/verdict.json" in rendered
     assert str(Path.home()) not in rendered
+    assert f"--bind {codex_home} /codex-home" in rendered
+    assert not codex_home.is_relative_to(workspace)
 
 
 def test_subscription_judge_rejects_tool_use_and_malformed_jsonl() -> None:
     clean = '\n'.join([
         json.dumps({"type": "thread.started"}),
+        json.dumps({"type": "turn.started"}),
         json.dumps({"type": "item.completed", "item": {"type": "reasoning"}}),
         json.dumps({"type": "item.completed", "item": {"type": "agent_message"}}),
+        json.dumps({"type": "turn.completed"}),
     ])
     _reject_tool_events(clean)
     with pytest.raises(ValueError, match="tool use"):
         _reject_tool_events(json.dumps({"type": "item.completed", "item": {"type": "command_execution"}}))
     with pytest.raises(ValueError, match="malformed JSONL"):
         _reject_tool_events("not-json")
+    with pytest.raises(ValueError, match="unknown event"):
+        _reject_tool_events(json.dumps({"type": "future.event"}))
+    with pytest.raises(ValueError, match="malformed.*item|unknown item"):
+        _reject_tool_events(json.dumps({"type": "item.completed"}))
+    with pytest.raises(ValueError, match="tool use"):
+        _reject_tool_events(json.dumps({"type": "item.started", "item": {"type": "web_search"}}))
