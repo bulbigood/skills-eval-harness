@@ -30,6 +30,7 @@ def provenance(dirty: bool = False) -> Provenance:
         harness_commit=COMMIT,
         harness_dirty=dirty,
         suite_sha256=SHA,
+        effective_suite_sha256=SHA,
         scenario_catalog_sha256=SHA,
         config_sha256=SHA,
         harbor_version="0.21.0",
@@ -46,6 +47,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     git(root, "remote", "add", "upstream", "https://github.com/iwe-org/skills-eval-harness.git")
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": True, "expected_cells": 1, "observed_cells": 1}))
     (run / "provenance.json").write_text(provenance().model_dump_json())
+    (run / "run-manifest.json").write_text("{}")
     (run / "jobs/job").mkdir(parents=True)
     (run / "jobs/job/lock.json").write_text("{}")
     seal_run(run)

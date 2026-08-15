@@ -26,6 +26,7 @@ class Provenance(BaseModel):
     harness_commit: str
     harness_dirty: bool
     suite_sha256: str
+    effective_suite_sha256: str
     scenario_catalog_sha256: str
     config_sha256: str
     harbor_version: Literal["0.21.0"]
@@ -43,6 +44,7 @@ class Provenance(BaseModel):
             self.selected_skill_sha256,
             self.runtime_sha256,
             self.suite_sha256,
+            self.effective_suite_sha256,
             self.scenario_catalog_sha256,
             self.config_sha256,
             *self.task_checksums.values(),
@@ -50,6 +52,7 @@ class Provenance(BaseModel):
         )
         if self.agents_template_sha256 is not None and not SHA256.fullmatch(self.agents_template_sha256):
             raise ValueError("AGENTS template digest must be lowercase SHA-256")
+
         if not hashes or any(not SHA256.fullmatch(value) for value in hashes):
             raise ValueError("all provenance digests must be lowercase SHA-256")
         return self
@@ -103,12 +106,18 @@ def verify_harbor_lock(provenance: Provenance, lock: dict) -> None:
             raise ValueError(f"unexpected or duplicate locked task: {key}")
         if not isinstance(digest, str) or not digest.startswith("sha256:") or not SHA256.fullmatch(digest.removeprefix("sha256:")):
             raise ValueError(f"invalid locked task digest: {key}")
+        if digest.removeprefix("sha256:") != provenance.task_checksums[key]:
+            raise ValueError(f"locked task digest mismatch: {key}")
         seen.add(key)
+    locked_sources = {key.split("/", 1)[0] for key in seen}
+    expected = {key for key in provenance.task_checksums if key.split("/", 1)[0] in locked_sources}
+    if seen != expected:
+        raise ValueError("Harbor lock is missing expected tasks")
 
 
 def seal_run(run_dir: Path) -> dict[str, object]:
     """Hash every publishable result and Harbor lock; the seal excludes itself."""
-    roots = [run_dir / "provenance.json", run_dir / "summary.json"]
+    roots = [run_dir / "provenance.json", run_dir / "run-manifest.json", run_dir / "summary.json"]
     roots.extend(sorted((run_dir / "cells").glob("*.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/lock.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/result.json")))
@@ -116,7 +125,7 @@ def seal_run(run_dir: Path) -> dict[str, object]:
     roots.extend(sorted((run_dir / "jobs").glob("**/workspace-manifest.json")))
     roots.extend(sorted((run_dir / "jobs").glob("**/mechanical.json")))
     files = {str(path.relative_to(run_dir)): sha256_file(path) for path in roots if path.is_file()}
-    if "provenance.json" not in files or "summary.json" not in files or not any(name.endswith("/lock.json") for name in files):
+    if "provenance.json" not in files or "run-manifest.json" not in files or "summary.json" not in files or not any(name.endswith("/lock.json") for name in files):
         raise ValueError("cannot seal incomplete run")
     seal: dict[str, object] = {"schema_version": 1, "files": files}
     atomic_write_json(run_dir / "run-seal.json", seal)

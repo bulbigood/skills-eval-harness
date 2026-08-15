@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+from harbor.publisher.packager import Packager
+
 EXCLUDED_NAMES = {".git", "__pycache__", ".DS_Store"}
 
 def sha256_bytes(data: bytes) -> str:
@@ -31,6 +33,11 @@ def sha256_tree(root: Path) -> str:
         digest.update(payload)
     return digest.hexdigest()
 
+def harbor_task_sha256(root: Path) -> str:
+    """Return Harbor v0.21's canonical local-task content digest."""
+    digest, _ = Packager.compute_content_hash(root)
+    return digest
+
 def atomic_write(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -39,5 +46,3 @@ def atomic_write(path: Path, payload: bytes) -> None:
 
 def atomic_write_json(path: Path, value: object) -> None:
     atomic_write(path, canonical_json(value))
-
-tree_sha256 = sha256_tree

@@ -100,15 +100,20 @@ def assert_no_secret_files(task_root: Path) -> None:
 def assert_symmetric_tasks(arm_roots: dict[str, Path]) -> None:
     if len(arm_roots) < 2:
         return
-    normalized: dict[str, tuple[str, str]] = {}
+    normalized: dict[str, dict[str, bytes]] = {}
     for arm, root in arm_roots.items():
-        task = (root / "task.toml").read_text(encoding="utf-8")
-        dockerfile = (root / "environment/Dockerfile").read_text(encoding="utf-8")
-        normalized[arm] = (task.replace(f"arm = \"{arm}\"", 'arm = "<arm>"'), dockerfile)
+        files: dict[str, bytes] = {}
+        for path in sorted(item for item in root.rglob("*") if item.is_file()):
+            relative = path.relative_to(root).as_posix()
+            payload = path.read_bytes()
+            if relative == "task.toml":
+                payload = payload.replace(f'arm = "{arm}"'.encode(), b'arm = "<arm>"')
+            files[relative] = payload
+        normalized[arm] = files
     first_arm, first = next(iter(normalized.items()))
     for arm, value in normalized.items():
         if value != first:
-            raise ValueError(f"containment differs between {first_arm} and {arm}")
+            raise ValueError(f"canonical task tree differs between {first_arm} and {arm}")
 
 def assert_symmetric_datasets(control: Path, treatment: Path) -> None:
     control_tasks = {path.name for path in control.iterdir() if path.is_dir()}

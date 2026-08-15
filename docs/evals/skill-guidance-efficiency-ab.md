@@ -34,9 +34,10 @@ uv run skills-eval run \
   --judge-auth chatgpt \
   --codex-auth-json "$HOME/.codex-harbor/auth.json" \
   --scenario ambiguous-discovery-with-one-follow-up \
-  --samples 1 \
-  --jobs 2
+  --samples 1
 ```
+
+The smoke uses the configured global concurrency limit of `4`, split evenly across the paired arms. `--jobs N` overrides that global ceiling; it is never multiplied by the arm count.
 
 Run the same bounded smoke with `--agent claude` before expanding the matrix. Full runs are paid and should follow smoke repair cycles.
 

@@ -12,5 +12,7 @@ scenarios:
 arms:
   - id: skill
     skill: true
+    role: treatment
   - id: no-skill
     skill: false
+    role: control

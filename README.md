@@ -51,6 +51,10 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 `--judge-auth chatgpt` runs the structured judge through an ephemeral, read-only Codex CLI sandbox using a separate temporary copy of the same explicitly selected login. `--judge-auth api-key` preserves the Responses API backend and requires `OPENAI_API_KEY`. Both backends feed the same strict local schema and evidence-reference validator. Claude workers continue to require `ANTHROPIC_API_KEY`.
 
+### Global concurrency
+
+`execution.global_concurrency` defaults to `4`. `--jobs N` overrides it for one run. The value is a global Harbor trial ceiling, not a per-arm allowance: paired arms run concurrently with an equal static share (`2 + 2` at the default). An odd spare slot remains unused rather than biasing one arm. If the limit is smaller than the arm count, arms run in deterministic one-slot batches. The resolved allocation is recorded in `run-manifest.json`.
+
 ## Suites
 
 - [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md)

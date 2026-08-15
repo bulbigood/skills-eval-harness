@@ -16,6 +16,7 @@ class StrictModel(BaseModel):
 class Arm(StrictModel):
     id: str
     skill: bool
+    role: Literal["control", "treatment"] | None = None
 
 class Suite(StrictModel):
     schema_version: Literal[1]
@@ -37,6 +38,8 @@ class Suite(StrictModel):
             raise ValueError("duplicate arm IDs")
         if self.kind == "paired" and len(self.arms) != 2:
             raise ValueError("paired suites require exactly two arms")
+        if self.kind == "paired" and {arm.role for arm in self.arms} != {"control", "treatment"}:
+            raise ValueError("paired suites require exactly one control and one treatment arm")
         if self.kind == "absolute" and len(self.arms) != 1:
             raise ValueError("absolute suites require exactly one arm")
         return self
@@ -64,7 +67,7 @@ class Judge(StrictModel):
 
 class Execution(StrictModel):
     timeout_seconds: int = Field(ge=1)
-    max_concurrency: int = Field(ge=1, le=32)
+    global_concurrency: int = Field(ge=1, le=32)
     retries: Literal[0]
 
 class HarnessConfig(StrictModel):
@@ -89,5 +92,3 @@ def load_suite(path: Path) -> Suite:
 
 def load_config(path: Path) -> HarnessConfig:
     return HarnessConfig.model_validate(load_yaml(path))
-
-load_harness_config = load_config

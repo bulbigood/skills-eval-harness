@@ -21,7 +21,7 @@ The evaluator has no compatibility path for the former TOML configuration or hos
 
 ## Deterministic verification
 
-Harbor runs the verifier in a separate container with no network. It validates the ATIF trajectory, rejects escaping symlinks, hashes the resulting workspace, checks read-only invariants, and applies declared hard tool-call limits. A mechanical failure cannot be overridden by the model judge.
+Harbor runs the verifier in a separate container with no network. It validates the ATIF trajectory, rejects escaping symlinks, hashes the resulting workspace, checks read-only invariants, and applies a bounded hard tool-call safety ceiling. The narrower scenario efficiency range remains judge evidence rather than an infrastructure-failure threshold. A true mechanical failure cannot be overridden by the model judge.
 
 ## Judge contract
 

@@ -30,6 +30,7 @@ def make_provenance(tmp_path: Path) -> tuple[Provenance, dict[str, Path]]:
         harness_commit="b" * 40,
         harness_dirty=False,
         suite_sha256=sha256_file(paths["suite"]),
+        effective_suite_sha256="e" * 64,
         scenario_catalog_sha256=sha256_file(paths["scenarios"]),
         config_sha256=sha256_file(paths["config"]),
         harbor_version="0.21.0",
@@ -52,3 +53,5 @@ def test_tampering_fails_closed(tmp_path: Path) -> None:
         verify_materialized(provenance, source_root=p["source"], skill_root=p["skill"], runtime=p["runtime"], suite=p["suite"], scenarios=p["scenarios"], config=p["config"])
     with pytest.raises(ValueError, match="no trials"):
         verify_harbor_lock(provenance, {"schema_version": 3, "harbor": {"version": "0.21.0"}, "trials": []})
+    with pytest.raises(ValueError, match="digest mismatch"):
+        verify_harbor_lock(provenance, {"schema_version": 3, "harbor": {"version": "0.21.0"}, "trials": [{"task": {"name": "task", "source": "arm", "digest": "sha256:" + "f" * 64}}]})

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import shutil
 from pathlib import Path
 
@@ -10,10 +11,23 @@ from harbor.models.task.config import TaskConfig
 from .hashing import atomic_write, canonical_json, sha256_file, sha256_tree
 from .models import HarnessConfig, Suite, load_yaml
 
-SKILL_LOAD_PATTERN = r'''^const r = await tools\.exec_command\(\{cmd:"sed -n '1,[0-9]+p' /root/\.agents/skills/[a-zA-Z0-9_.-]+/SKILL\.md",(?:workdir:"/workspace",)?yield_time_ms:[0-9]+,max_output_tokens:[0-9]+\}\);[ \n]*text\(r\.output\);\n$'''
+DEFAULT_HARD_TOOL_CALL_LIMIT = 8
+def _is_bounded_skill_load(action: str) -> bool:
+    normalized = action.replace("});\ntext(r.output);", "}); text(r.output);")
+    return (
+        "sed -n" in normalized
+        and "/root/.agents/skills/" in normalized
+        and "SKILL.md" in normalized
+        and "&&" not in normalized
+        and "||" not in normalized
+    )
 
-VERIFIER = r'''#!/usr/bin/env python3
-import hashlib, json, os, re
+_SKILL_LOAD_FUNCTION = inspect.getsource(_is_bounded_skill_load).replace(
+    "def _is_bounded_skill_load(action: str) -> bool:", "def skill_load(action):", 1
+)
+
+VERIFIER_TEMPLATE = r'''#!/usr/bin/env python3
+import hashlib, json, os
 from pathlib import Path
 
 def tree(root):
@@ -47,25 +61,33 @@ def collect_tools(value):
     if isinstance(value,list):
         return [call for item in value for call in collect_tools(item)]
     return []
-skill_load=re.compile(SKILL_LOAD_PATTERN)
+__SKILL_LOAD_FUNCTION__
 def is_skill_load(call):
     if not isinstance(call,dict) or call.get("function_name") != "exec": return False
     arguments=call.get("arguments")
-    return isinstance(arguments,dict) and set(arguments)=={"input"} and isinstance(arguments["input"],str) and skill_load.fullmatch(arguments["input"]) is not None
+    return isinstance(arguments,dict) and set(arguments)=={"input"} and isinstance(arguments["input"],str) and skill_load(arguments["input"])
+def task_output_bytes(document):
+    return sum(
+        len(json.dumps(step.get("observation"),ensure_ascii=False,sort_keys=True).encode("utf-8"))
+        for step in document["steps"]
+        if isinstance(step,dict) and isinstance(step.get("tool_calls"),list) and any(not is_skill_load(call) for call in step["tool_calls"])
+    )
 all_tool_calls=collect_tools(document)
 setup_tool_calls=sum(is_skill_load(call) for call in all_tool_calls)
 tool_calls=len(all_tool_calls)-setup_tool_calls
+task_tool_output_bytes=task_output_bytes(document)
 unchanged=manifest==before
 failures=[]
 if policy["read_only"] and not unchanged: failures.append("read-only scenario modified workspace")
 hard_max=policy.get("hard_max_task_tool_calls")
 if hard_max is not None and tool_calls>hard_max: failures.append("hard tool-call maximum exceeded")
-payload={"workspace":manifest,"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
+payload={"workspace":manifest,"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"task_tool_output_bytes":task_tool_output_bytes,"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
 Path("/logs/verifier/workspace-manifest.json").write_text(json.dumps(payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/mechanical.json").write_text(json.dumps(payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/reward.json").write_text(json.dumps({"infrastructure":0.0 if failures else 1.0}),encoding="utf-8")
 '''
-VERIFIER = VERIFIER.replace("SKILL_LOAD_PATTERN", repr(SKILL_LOAD_PATTERN), 1)
+VERIFIER = VERIFIER_TEMPLATE.replace("__SKILL_LOAD_FUNCTION__", _SKILL_LOAD_FUNCTION)
+
 
 TEST_SH = "#!/bin/sh\nset -eu\npython3 /tests/verify.py\n"
 
@@ -109,8 +131,8 @@ fixture = "{fixture}"
 harness_protocol = "iwe-harbor-v1"
 
 [agent]
-timeout_sec = 1800.0
-network_mode = "allowlist"
+timeout_sec = {float(config.execution.timeout_seconds)}
+network_mode = "{c.network_mode}"
 allowed_hosts = {json.dumps(list(c.agent_hosts[agent]))}
 
 [verifier]
@@ -132,7 +154,7 @@ cpus = {c.cpus}
 memory_mb = {c.memory_mb}
 storage_mb = {c.storage_mb}
 gpus = 0
-network_mode = "no-network"
+network_mode = "{c.verifier_network_mode}"
 mcp_servers = []
 '''
 
@@ -176,7 +198,7 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             efficiency = scenario.get("efficiency") or {}
             hard_max = runtime_policy.get("hard_max_task_tool_calls")
             if hard_max is None and efficiency.get("task_tool_calls"):
-                hard_max = efficiency["task_tool_calls"][1]
+                hard_max = max(DEFAULT_HARD_TOOL_CALL_LIMIT, efficiency["task_tool_calls"][1])
             atomic_write(task / "tests/before-tree.json", canonical_json(_tree_manifest(task / "environment/payload/workspace")))
             atomic_write(task / "tests/policy.json", canonical_json({"read_only": not write_capability, "hard_max_task_tool_calls": hard_max}))
             (task / "instruction.md").write_text(f"Work offline.\n\nRequest:\n{scenario['request']}\n", encoding="utf-8")

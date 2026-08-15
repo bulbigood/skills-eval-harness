@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from skills_eval_harness.models import load_harness_config
+from skills_eval_harness.models import load_config
 from skills_eval_harness.security import (
     assert_symmetric_datasets,
     selected_environment,
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_only_selected_provider_secret_is_exposed() -> None:
-    config = load_harness_config(ROOT / "evals/config.yaml")
+    config = load_config(ROOT / "evals/config.yaml")
     source = {"PATH": "/bin", "OPENAI_API_KEY": "openai", "ANTHROPIC_API_KEY": "anthropic", "GH_TOKEN": "github"}
     codex = selected_environment(config, "codex", source)
     claude = selected_environment(config, "claude", source)
@@ -64,7 +64,7 @@ def test_chatgpt_auth_rejects_symlink(tmp_path: Path) -> None:
 
 
 def test_chatgpt_worker_does_not_receive_platform_api_key() -> None:
-    config = load_harness_config(ROOT / "evals/config.yaml")
+    config = load_config(ROOT / "evals/config.yaml")
     source = {"PATH": "/bin", "OPENAI_API_KEY": "platform-key"}
     env = selected_environment(config, "codex", source, include_provider_credential=False)
     assert env == {"PATH": "/bin"}
