@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .fixtures import fixture_source_name, load_fixture_sources
+from .fixtures import materialized_fixture_path
 from .hashing import (
     canonical_json,
     git_object_sha1,
@@ -286,8 +286,7 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             for excerpt in excerpts:
                 if not isinstance(excerpt, dict) or set(excerpt) != {"path", "sha256", "text"}:
                     raise ValueError("invalid semantic oracle source evidence")
-                source_name = fixture_source_name(scenario["fixture"], load_fixture_sources(fixtures_path))
-                source_path = run_dir / "inputs/fixtures" / source_name / excerpt["path"]
+                source_path = materialized_fixture_path(run_dir, scenario["fixture"], excerpt["path"])
                 if (
                     before.get(excerpt["path"]) != excerpt["sha256"]
                     or not source_path.is_file()

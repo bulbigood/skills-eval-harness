@@ -114,3 +114,13 @@ def materialize_fixture(source: Path, destination: Path, fixture_name: str) -> N
         "    priority: { type: number }\n",
         encoding="utf-8",
     )
+
+
+def materialized_fixture_path(run_dir: Path, fixture_name: str, relative_path: str) -> Path:
+    root = (run_dir / "inputs/materialized-fixtures").resolve()
+    candidate = (root / fixture_name / relative_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("materialized fixture path escapes the sealed fixture root") from exc
+    return candidate

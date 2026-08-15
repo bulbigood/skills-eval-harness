@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from skills_eval_harness.fixtures import materialize_fixture
+import pytest
+
+from skills_eval_harness.fixtures import materialize_fixture, materialized_fixture_path
 
 
 def test_core_read_fixture_materializes_expected_documents_and_schema(tmp_path: Path) -> None:
@@ -39,3 +41,12 @@ def test_api_project_fixture_adds_project_frontmatter(tmp_path: Path) -> None:
     assert (destination / "graph/api-integration.md").read_text() == (
         "---\ntype: project\n---\n\n# API Integration\n\nShip it.\n"
     )
+
+
+def test_materialized_fixture_path_is_scoped_to_sealed_root(tmp_path: Path) -> None:
+    expected = tmp_path / "inputs/materialized-fixtures/pkm-demo-core-read/graph/core-beta.md"
+    assert materialized_fixture_path(
+        tmp_path, "pkm-demo-core-read", "graph/core-beta.md"
+    ) == expected
+    with pytest.raises(ValueError, match="escapes"):
+        materialized_fixture_path(tmp_path, "pkm-demo-core-read", "../../../secret")
