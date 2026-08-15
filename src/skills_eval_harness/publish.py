@@ -106,6 +106,12 @@ def _stage(root: Path, paths: tuple[Path, ...]) -> None:
 def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     summary = validate_run_bundle(run_dir, require_seal=True)
     telemetry = validate_device_telemetry(run_dir / "device-telemetry.json")
+    if (
+        telemetry.schema_version != 2
+        or telemetry.terminal_status != "completed"
+        or telemetry.sampling_errors != 0
+    ):
+        raise ValueError("publication requires complete healthy schema-v2 telemetry")
     manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
     run_id = validate_run_id(manifest.get("run_id"))
     provenance = Provenance.model_validate_json(
@@ -140,6 +146,9 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     telemetry_summary = {
         "schema_version": telemetry.schema_version,
         "scope": getattr(telemetry.host, "telemetry_scope", "whole-host"),
+        "network_scope": telemetry.host.network_scope,
+        "disk_scope": telemetry.host.disk_scope,
+        "rootfs_scope": telemetry.host.filesystem_scope,
         "logical_cpus": telemetry.host.logical_cpus,
         "total_memory_bytes": telemetry.host.total_memory_bytes,
         "total_swap_bytes": telemetry.host.total_swap_bytes,
@@ -203,7 +212,12 @@ The report is derived from the bundled, sealed machine-readable evidence. Device
 
     lock_path = output.with_name(f".{output.name}.publish.lock")
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    temporary_root = Path(tempfile.mkdtemp(prefix=".publication-", dir=output.parent))
+    try:
+        temporary_root = Path(tempfile.mkdtemp(prefix=".publication-", dir=output.parent))
+    except Exception:
+        os.close(lock_fd)
+        lock_path.unlink(missing_ok=True)
+        raise
     temporary_evidence = temporary_root / evidence_dir.name
     temporary_output = temporary_root / output.name
     temporary_checksum = temporary_root / checksum.name

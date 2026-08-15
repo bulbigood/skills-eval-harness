@@ -97,7 +97,7 @@ def test_device_telemetry_requires_network_disk_and_rootfs_measurements(tmp_path
             "docker_metrics_available": True,
             "telemetry_scope": "whole-host",
             "network_scope": "default-route-interfaces",
-            "disk_scope": "whole-block-devices",
+            "disk_scope": "physical-block-devices",
             "filesystem_scope": "root-filesystem",
         },
         "samples": [{

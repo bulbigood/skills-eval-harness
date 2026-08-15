@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -386,9 +387,21 @@ def run(args: argparse.Namespace) -> Path:
         set(required_credentials),
         auth_source,
     )
-    run_root = prepare(args)
-    telemetry = TelemetryRecorder(run_root / "device-telemetry.json")
+    telemetry_fd, telemetry_name = tempfile.mkstemp(prefix="skills-eval-telemetry-", suffix=".json")
+    os.close(telemetry_fd)
+    telemetry_temp = Path(telemetry_name)
+    telemetry_temp.unlink()
+    telemetry = TelemetryRecorder(telemetry_temp)
     telemetry.start()
+    try:
+        run_root = prepare(args)
+    except Exception:
+        try:
+            telemetry.stop("failed")
+        finally:
+            telemetry_temp.unlink(missing_ok=True)
+        raise
+    telemetry.output = run_root / "device-telemetry.json"
     try:
         _execute_run(
             args=args,

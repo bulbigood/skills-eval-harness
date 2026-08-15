@@ -29,7 +29,7 @@ class LegacyHostCapacity(StrictTelemetryModel):
 class HostCapacity(LegacyHostCapacity):
     telemetry_scope: Literal["whole-host"]
     network_scope: Literal["default-route-interfaces"]
-    disk_scope: Literal["whole-block-devices"]
+    disk_scope: Literal["physical-block-devices"]
     filesystem_scope: Literal["root-filesystem"]
 
 
@@ -103,6 +103,44 @@ class DeviceTelemetry(StrictTelemetryModel):
 
 
 _TELEMETRY_ADAPTER = TypeAdapter(LegacyDeviceTelemetry | DeviceTelemetry)
+
+
+def _validate_v2_consistency(telemetry: DeviceTelemetry) -> None:
+    samples = telemetry.samples
+    if any(item.mem_available_bytes > telemetry.host.total_memory_bytes for item in samples):
+        raise ValueError("available memory exceeds host capacity")
+    if any(item.swap_free_bytes > telemetry.host.total_swap_bytes for item in samples):
+        raise ValueError("free swap exceeds host capacity")
+    for previous, current in zip(samples, samples[1:], strict=False):
+        before = {name: getattr(previous, name) for name in _COUNTERS} | {"elapsed_ms": previous.elapsed_ms}
+        after = {name: getattr(current, name) for name in _COUNTERS} | {"elapsed_ms": current.elapsed_ms}
+        if current.elapsed_ms <= previous.elapsed_ms:
+            raise ValueError("sample elapsed times are not increasing")
+        expected = _rates(before, after)
+        if any(abs(getattr(current, name) - value) > max(1e-6, abs(value) * 1e-9) for name, value in expected.items()):
+            raise ValueError("stored rates do not derive from counters")
+    first, last = samples[0], samples[-1]
+    if telemetry.totals.model_dump() != {name: getattr(last, name) - getattr(first, name) for name in _COUNTERS}:
+        raise ValueError("totals do not derive from samples")
+    expected_peaks = {
+        "cpu_percent": max(item.cpu_percent for item in samples),
+        "load1": max(item.load1 for item in samples),
+        "running_containers": max(item.running_containers for item in samples),
+        "network_rx_bytes_per_second": max(item.network_rx_bytes_per_second for item in samples),
+        "network_tx_bytes_per_second": max(item.network_tx_bytes_per_second for item in samples),
+        "disk_read_bytes_per_second": max(item.disk_read_bytes_per_second for item in samples),
+        "disk_write_bytes_per_second": max(item.disk_write_bytes_per_second for item in samples),
+        "rootfs_used_bytes": max(item.rootfs_used_bytes for item in samples),
+    }
+    if telemetry.peaks.model_dump() != expected_peaks:
+        raise ValueError("peaks do not derive from samples")
+    expected_minima = {
+        "mem_available_bytes": min(item.mem_available_bytes for item in samples),
+        "swap_free_bytes": min(item.swap_free_bytes for item in samples),
+        "rootfs_free_bytes": min(item.rootfs_free_bytes for item in samples),
+    }
+    if telemetry.minima.model_dump() != expected_minima:
+        raise ValueError("minima do not derive from samples")
 _COUNTERS = ("network_rx_bytes", "network_tx_bytes", "disk_read_bytes", "disk_write_bytes")
 
 
@@ -114,6 +152,11 @@ def validate_device_telemetry(path: Path) -> LegacyDeviceTelemetry | DeviceTelem
         raise ValueError(f"invalid or sensitive device telemetry: {exc}") from exc
     if telemetry.finished_unix_ms < telemetry.started_unix_ms:
         raise ValueError("invalid or sensitive device telemetry: finish precedes start")
+    if isinstance(telemetry, DeviceTelemetry):
+        try:
+            _validate_v2_consistency(telemetry)
+        except ValueError as exc:
+            raise ValueError(f"invalid device telemetry: {exc}") from exc
     return telemetry
 
 
@@ -151,6 +194,15 @@ def _network_totals() -> tuple[int, int]:
         and fields[1] == "00000000"
         and int(fields[3], 16) & 0x1
     }
+    ipv6_routes = Path("/proc/net/ipv6_route")
+    if ipv6_routes.is_file():
+        interfaces.update(
+            fields[-1]
+            for line in ipv6_routes.read_text(encoding="utf-8").splitlines()
+            if len(fields := line.split()) >= 10
+            and fields[0] == "0" * 32
+            and fields[1] == "00000000"
+        )
     if not interfaces:
         raise ValueError("host telemetry requires an active default-route interface")
     received = transmitted = 0
@@ -171,7 +223,8 @@ def _disk_totals() -> tuple[int, int]:
         if len(fields) < 14:
             continue
         device = fields[2]
-        if not (Path("/sys/block") / device).exists():
+        block = Path("/sys/block") / device
+        if not block.exists() or not (block / "device").exists() or device.startswith(("loop", "ram")):
             continue
         read_sectors += int(fields[5])
         write_sectors += int(fields[9])
@@ -195,9 +248,11 @@ def _container_count() -> tuple[int, bool]:
 
 def _rates(previous: dict[str, int], current: dict[str, int]) -> dict[str, float]:
     elapsed_seconds = (current["elapsed_ms"] - previous["elapsed_ms"]) / 1000
+    if any(current[name] < previous[name] for name in _COUNTERS):
+        raise ValueError("host telemetry counters decreased")
     return {
         f"{name}_per_second": (
-            max(0.0, (current[name] - previous[name]) / elapsed_seconds)
+            (current[name] - previous[name]) / elapsed_seconds
             if elapsed_seconds > 0 else 0.0
         )
         for name in _COUNTERS
@@ -319,11 +374,9 @@ class TelemetryRecorder:
             if not isinstance(telemetry, DeviceTelemetry):
                 raise ValueError("new telemetry recorder produced a legacy schema")
             return telemetry
-        self.stopped = True
         self.stop_event.set()
         if self.thread.is_alive():
             self.thread.join()
-        oom_events = 0
         try:
             try:
                 self._sample()
@@ -331,7 +384,7 @@ class TelemetryRecorder:
                 self.sampling_errors += 1
         finally:
             stdout = self._stop_oom_monitor()
-            oom_events = len([line for line in stdout.splitlines() if line.strip()])
+        oom_events = len([line for line in stdout.splitlines() if line.strip()])
         memory = _meminfo()
         _, docker_available = _container_count()
         first = self.samples[0]
@@ -347,7 +400,7 @@ class TelemetryRecorder:
                 docker_metrics_available=docker_available,
                 telemetry_scope="whole-host",
                 network_scope="default-route-interfaces",
-                disk_scope="whole-block-devices",
+                disk_scope="physical-block-devices",
                 filesystem_scope="root-filesystem",
             ),
             samples=tuple(self.samples),
@@ -366,15 +419,16 @@ class TelemetryRecorder:
                 swap_free_bytes=min(sample.swap_free_bytes for sample in self.samples),
                 rootfs_free_bytes=min(sample.rootfs_free_bytes for sample in self.samples),
             ),
-            totals=IoTotals(**{
-                name: max(0, getattr(last, name) - getattr(first, name)) for name in _COUNTERS
-            }),
+            totals=IoTotals(**{name: getattr(last, name) - getattr(first, name) for name in _COUNTERS}),
             docker_oom_events=oom_events,
             sampling_errors=self.sampling_errors,
             terminal_status="failed" if self.sampling_errors else terminal_status,
         )
         atomic_write_json(self.output, telemetry.model_dump(mode="json"))
-        validate_device_telemetry(self.output)
+        validated = validate_device_telemetry(self.output)
+        if not isinstance(validated, DeviceTelemetry):
+            raise ValueError("new telemetry recorder produced a legacy schema")
+        self.stopped = True
         if self.sampling_errors:
             raise RuntimeError("device telemetry sampling failed; partial metrics were persisted")
         return telemetry

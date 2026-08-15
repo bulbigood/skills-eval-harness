@@ -93,12 +93,33 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
         "verdict": {"dimensions": []},
     }))
     (run / "device-telemetry.json").write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "started_unix_ms": 1000,
         "finished_unix_ms": 2000,
-        "host": {"logical_cpus": 2, "total_memory_bytes": 4096, "total_swap_bytes": 0, "docker_metrics_available": True},
-        "samples": [{"elapsed_ms": 0, "cpu_percent": 25.0, "load1": 0.5, "mem_available_bytes": 2048, "swap_free_bytes": 0, "running_containers": 2}],
-        "docker_oom_events": 0,
+        "host": {
+            "logical_cpus": 2, "total_memory_bytes": 4096, "total_swap_bytes": 0,
+            "docker_metrics_available": True, "telemetry_scope": "whole-host",
+            "network_scope": "default-route-interfaces", "disk_scope": "physical-block-devices",
+            "filesystem_scope": "root-filesystem",
+        },
+        "samples": [{
+            "elapsed_ms": 0, "cpu_percent": 25.0, "load1": 0.5,
+            "mem_available_bytes": 2048, "swap_free_bytes": 0, "running_containers": 2,
+            "network_rx_bytes": 100, "network_tx_bytes": 200,
+            "disk_read_bytes": 300, "disk_write_bytes": 400,
+            "network_rx_bytes_per_second": 0.0, "network_tx_bytes_per_second": 0.0,
+            "disk_read_bytes_per_second": 0.0, "disk_write_bytes_per_second": 0.0,
+            "rootfs_used_bytes": 1000, "rootfs_free_bytes": 2000,
+        }],
+        "peaks": {
+            "cpu_percent": 25.0, "load1": 0.5, "running_containers": 2,
+            "network_rx_bytes_per_second": 0.0, "network_tx_bytes_per_second": 0.0,
+            "disk_read_bytes_per_second": 0.0, "disk_write_bytes_per_second": 0.0,
+            "rootfs_used_bytes": 1000,
+        },
+        "minima": {"mem_available_bytes": 2048, "swap_free_bytes": 0, "rootfs_free_bytes": 2000},
+        "totals": {"network_rx_bytes": 0, "network_tx_bytes": 0, "disk_read_bytes": 0, "disk_write_bytes": 0},
+        "docker_oom_events": 0, "sampling_errors": 0, "terminal_status": "completed",
     }))
     seal_run(run)
     return root, run
@@ -181,3 +202,25 @@ def test_device_telemetry_rejects_sensitive_or_unexpected_fields(tmp_path: Path)
     seal_run(run)
     with pytest.raises(ValueError, match="device telemetry"):
         validate_device_telemetry(telemetry)
+
+
+def test_publisher_requires_healthy_current_telemetry_and_releases_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, run = setup(tmp_path)
+    output = root / "published.md"
+    telemetry = run / "device-telemetry.json"
+    payload = json.loads(telemetry.read_text())
+    payload["terminal_status"] = "failed"
+    telemetry.write_text(json.dumps(payload))
+    seal_run(run)
+    with pytest.raises(ValueError, match="healthy schema-v2"):
+        publish(root=root, run_dir=run, output=output)
+
+    payload["terminal_status"] = "completed"
+    telemetry.write_text(json.dumps(payload))
+    seal_run(run)
+    monkeypatch.setattr("skills_eval_harness.publish.tempfile.mkdtemp", lambda **_: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError, match="disk"):
+        publish(root=root, run_dir=run, output=output)
+    assert not (root / ".published.md.publish.lock").exists()
