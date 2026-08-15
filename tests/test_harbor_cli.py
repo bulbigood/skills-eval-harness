@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from skills_eval_harness.cli import (
     _resolve_global_concurrency,
     _scenario_family,
     parser,
+    verify_agent_image,
 )
 from skills_eval_harness.dataset import scenario_map
 from skills_eval_harness.models import load_config
@@ -74,3 +76,47 @@ def test_subscription_worker_and_judge_require_no_platform_api_key() -> None:
     assert _required_credentials(config, "codex", "chatgpt", "chatgpt") == set()
     assert _required_credentials(config, "codex", "chatgpt", "api-key") == {"OPENAI_API_KEY"}
     assert _required_credentials(config, "codex", "api-key", "chatgpt") == {"OPENAI_API_KEY"}
+
+
+@pytest.mark.parametrize(
+    ("returncode", "image_id"),
+    ((1, ""), (0, "sha256:" + "0" * 64)),
+)
+def test_agent_image_preflight_rejects_missing_or_wrong_id(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    image_id: str,
+) -> None:
+    config = load_config(ROOT / "evals/config.yaml")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> SimpleNamespace:
+        calls.append(command)
+        return SimpleNamespace(returncode=returncode, stdout=image_id)
+
+    monkeypatch.setattr("skills_eval_harness.cli.subprocess.run", fake_run)
+    with pytest.raises(ValueError, match="unavailable or has the wrong ID"):
+        verify_agent_image(config)
+    assert len(calls) == 1
+
+
+def test_agent_image_preflight_checks_versions_after_exact_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(ROOT / "evals/config.yaml")
+    responses = iter((
+        SimpleNamespace(returncode=0, stdout=config.container.agent_image_id),
+        SimpleNamespace(returncode=0, stdout=""),
+    ))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> SimpleNamespace:
+        commands.append(command)
+        return next(responses)
+
+    monkeypatch.setattr("skills_eval_harness.cli.subprocess.run", fake_run)
+    verify_agent_image(config)
+    assert commands[1][0:6] == ["docker", "run", "--rm", "--network", "none", config.container.agent_image]
+    assert "node --version" in commands[1][-1]
+    assert "codex --version" in commands[1][-1]
+    assert "claude --version" in commands[1][-1]

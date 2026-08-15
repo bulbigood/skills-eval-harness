@@ -119,6 +119,14 @@ VERIFIER = VERIFIER_TEMPLATE.replace("__SKILL_LOAD_FUNCTION__", _SKILL_LOAD_FUNC
 
 TEST_SH = "#!/bin/sh\nset -eu\npython3 /tests/verify.py\n"
 
+
+def agent_dockerfile(config: HarnessConfig) -> str:
+    return (
+        f"FROM {config.container.agent_image}@{config.container.agent_image_id}\n"
+        "COPY payload/ /\n"
+        "WORKDIR /workspace\n"
+    )
+
 def _copy(source: Path, destination: Path) -> None:
     if destination.exists():
         shutil.rmtree(destination) if destination.is_dir() else destination.unlink()
@@ -271,7 +279,7 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             _copy(runtime, task / "environment/payload/usr/local/bin/iwe")
             (task / "environment/payload/usr/local/bin/iwe").chmod(0o755)
             image = config.container.image
-            (task / "environment/Dockerfile").write_text(f"FROM {image}\nCOPY payload/ /\nWORKDIR /workspace\n", encoding="utf-8")
+            (task / "environment/Dockerfile").write_text(agent_dockerfile(config), encoding="utf-8")
             (task / "tests/Dockerfile").write_text(f"FROM {image}\nCOPY . /tests/\n", encoding="utf-8")
             (task / "tests/verify.py").write_text(VERIFIER, encoding="utf-8")
             (task / "tests/test.sh").write_text(TEST_SH, encoding="utf-8")

@@ -79,6 +79,16 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
     if any(not path.is_file() or sha256_file(path) != digest for path, digest in expected_hashes.items()):
         raise ValueError("sealed run inputs do not match provenance")
     config = load_config(config_path)
+    expected_images = {
+        "agent": config.container.agent_image_id.removeprefix("sha256:"),
+        "verifier": config.container.image.rsplit("@sha256:", 1)[1],
+    }
+    if provenance.image_digests != expected_images:
+        raise ValueError("sealed container images do not match provenance")
+    if provenance.node_version != config.container.node_version:
+        raise ValueError("sealed Node version does not match provenance")
+    if provenance.agent_versions != {name: value.version for name, value in config.agents.items()}:
+        raise ValueError("sealed agent versions do not match provenance")
     if config.runtimes.get(provenance.runtime_version) != provenance.runtime_sha256:
         raise ValueError("runtime version is not bound to canonical bytes")
     _verify_git_snapshot(
@@ -173,6 +183,10 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
     expected_evidence: dict[tuple[str, str, int], list[dict]] = {}
     observed_trials: set[tuple[str, str, int]] = set()
     profile = config.agents[manifest["agent"]]
+    if manifest.get("agent_version") != profile.version:
+        raise ValueError("run manifest agent version does not match the sealed config")
+    if manifest.get("node_version") != config.container.node_version:
+        raise ValueError("run manifest Node version does not match the sealed config")
     batches = manifest["execution"]["arm_concurrency_batches"]
     for arm in arms:
         arm_id = arm["id"]
@@ -215,6 +229,7 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             n_concurrent=concurrency,
             retries=config.execution.retries,
             agent_name=profile.harbor_name,
+            agent_version=profile.version,
             model=profile.model,
             skill_enabled=arm["skill"],
         )

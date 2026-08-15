@@ -28,7 +28,7 @@ from .hashing import (
 )
 from .judge import build_evidence, build_judge_messages, derive_cell_outcome
 from .judge_client import judge_cell
-from .models import load_config, load_suite, scenario_family, validate_run_id
+from .models import HarnessConfig, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
 from .security import (
@@ -98,9 +98,40 @@ def validate_repository() -> None:
         raise ValueError("container image must be digest pinned")
 
 
+def verify_agent_image(config: HarnessConfig) -> None:
+    image = config.container.agent_image
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", image, "--format", "{{.Id}}"],
+        capture_output=True,
+        text=True,
+    )
+    if inspected.returncode != 0 or inspected.stdout.strip() != config.container.agent_image_id:
+        raise ValueError(
+            f"required immutable agent image is unavailable or has the wrong ID: {image}"
+        )
+    expected = {
+        "node": f"v{config.container.node_version}",
+        "codex": f"codex-cli {config.agents['codex'].version}",
+    }
+    command = (
+        f'test "$(node --version)" = "{expected["node"]}" && '
+        f'test "$(codex --version)" = "{expected["codex"]}" && '
+        f'claude --version | grep -F "{config.agents["claude"].version}"'
+    )
+    verified = subprocess.run(
+        ["docker", "run", "--rm", "--network", "none", image, "sh", "-lc", command],
+        capture_output=True,
+        text=True,
+    )
+    if verified.returncode != 0:
+        raise ValueError("immutable agent image does not contain the configured toolchain versions")
+
+
 def prepare(args: argparse.Namespace) -> Path:
     validate_repository()
     config = load_config(CONFIG)
+    verify_agent_image(config)
+    profile = config.agents[args.agent]
     global_concurrency = _resolve_global_concurrency(args.jobs, config)
     suite_path = Path(args.suite).resolve()
     suite = load_suite(suite_path)
@@ -195,7 +226,8 @@ def prepare(args: argparse.Namespace) -> Path:
         for arm, dataset in datasets.items()
         for task in sorted(dataset.iterdir()) if task.is_dir()
     }
-    image_digest = config.container.image.rsplit("@sha256:", 1)[1]
+    verifier_image_digest = config.container.image.rsplit("@sha256:", 1)[1]
+    agent_image_digest = config.container.agent_image_id.removeprefix("sha256:")
     provenance = Provenance(
         source_url=source.source_url,
         source_commit=source.commit,
@@ -214,8 +246,10 @@ def prepare(args: argparse.Namespace) -> Path:
         config_sha256=sha256_file(inputs / "config.yaml"),
         fixture_registry_sha256=sha256_file(inputs / "fixture-sources.json"),
         harbor_version=config.harbor_version,
+        node_version=config.container.node_version,
+        agent_versions={name: value.version for name, value in config.agents.items()},
         task_checksums=tasks,
-        image_digests={"agent": image_digest, "verifier": image_digest},
+        image_digests={"agent": agent_image_digest, "verifier": verifier_image_digest},
         fixture_sources={
             name: FixtureRevision.model_validate(
                 {**value, "payload_sha256": sha256_tree(inputs / "fixtures" / name)}
@@ -232,6 +266,8 @@ def prepare(args: argparse.Namespace) -> Path:
         "suite": suite.model_dump(mode="json"),
         "suite_repository_path": suite_repository_path,
         "agent": args.agent,
+        "agent_version": profile.version,
+        "node_version": config.container.node_version,
         "worker_auth_mode": getattr(args, "codex_auth", "api-key"),
         "judge_auth_mode": getattr(args, "judge_auth", "api-key"),
         "samples": args.samples,
@@ -398,6 +434,7 @@ def _execute_run(
             "-a", profile.harbor_name, "-m", profile.model, "-k", "1",
             "-n", str(arm_concurrency), "--max-retries", str(config.execution.retries), "--env", "docker",
             "--jobs-dir", str(jobs), "--job-name", f"{run_root.name}-{arm_id}", "--yes",
+            "--ak", f"version={profile.version}",
         ]
         command.extend(_codex_auth_args(staged_auth))
         if arm["skill"]:
@@ -474,6 +511,7 @@ def _execute_run(
                     n_concurrent=arm_concurrency,
                     retries=config.execution.retries,
                     agent_name=profile.harbor_name,
+                    agent_version=profile.version,
                     model=profile.model,
                     skill_enabled=arm["skill"],
                 )

@@ -64,9 +64,12 @@ class Suite(StrictModel):
 
 class Container(StrictModel):
     image: str
+    agent_image: str
+    agent_image_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     cpus: int = Field(ge=1)
     memory_mb: int = Field(ge=256)
     storage_mb: int = Field(ge=1024)
+    node_version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
     network_mode: Literal["allowlist"]
     agent_hosts: dict[str, list[str]]
     verifier_network_mode: Literal["no-network"]
@@ -74,6 +77,7 @@ class Container(StrictModel):
 class Agent(StrictModel):
     harbor_name: Literal["codex", "claude-code"]
     model: str
+    version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
     credential_env: Literal["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
 
 class Judge(StrictModel):

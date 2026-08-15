@@ -48,6 +48,8 @@ def provenance(dirty: bool = False) -> Provenance:
         config_sha256=SHA,
         fixture_registry_sha256=SHA,
         harbor_version="0.21.0",
+        node_version="22.23.2",
+        agent_versions={"codex": "0.147.0", "claude": "2.1.233"},
         task_checksums={"task": SHA},
         image_digests={"agent": SHA},
         fixture_sources={"fixture": {"repository": "https://github.com/acme/fixture", "commit": COMMIT, "tree": COMMIT, "payload_sha256": SHA}},
@@ -62,7 +64,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     git(root, "remote", "add", "upstream", "https://github.com/iwe-org/skills-eval-harness.git")
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": True, "expected_cells": 1, "observed_cells": 1}))
     (run / "provenance.json").write_text(provenance().model_dump_json())
-    (run / "run-manifest.json").write_text(json.dumps({"run_id": "canonical-production-run", "run_purpose": "production", "samples": 10, "suite_default_samples": 10}))
+    (run / "run-manifest.json").write_text(json.dumps({"run_id": "canonical-production-run", "run_purpose": "production", "agent": "codex", "agent_version": "0.147.0", "node_version": "22.23.2", "samples": 10, "suite_default_samples": 10}))
     (run / "jobs/job/trial/agent").mkdir(parents=True)
     (run / "jobs/job/trial/verifier").mkdir(parents=True)
     (run / "jobs/job/lock.json").write_text("{}")

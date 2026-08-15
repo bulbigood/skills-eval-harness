@@ -81,6 +81,8 @@ def make_provenance(tmp_path: Path) -> tuple[Provenance, dict[str, Path]]:
         config_sha256=sha256_file(paths["config"]),
         fixture_registry_sha256=sha256_file(paths["config"]),
         harbor_version="0.21.0",
+        node_version="22.23.2",
+        agent_versions={"codex": "0.147.0", "claude": "2.1.233"},
         task_checksums={"arm/task": "c" * 64},
         image_digests={"agent": "d" * 64},
         fixture_sources={"fixture": {"repository": "https://github.com/acme/fixture", "commit": "f" * 40, "tree": "e" * 40, "payload_sha256": "a" * 64}},
@@ -104,7 +106,7 @@ def lock_for(provenance: Provenance, *, digest: str | None = None) -> dict:
                 "skills": [],
                 "resume_trajectory": False,
                 "extra_allowed_hosts": [],
-                "kwargs": {},
+                "kwargs": {"version": "0.147.0"},
                 "mcp_servers": [],
             },
             "skills": [],
@@ -132,6 +134,7 @@ def verify_lock(provenance: Provenance, lock: dict) -> None:
         n_concurrent=1,
         retries=0,
         agent_name="codex",
+        agent_version="0.147.0",
         model="model",
         skill_enabled=False,
     )
@@ -184,7 +187,7 @@ def test_lock_binds_execution_agent_and_skill_controls(tmp_path: Path) -> None:
         lock[key] = value
         with pytest.raises(ValueError):
             verify_lock(provenance, lock)
-    for key, value in (("name", "other"), ("model_name", "other")):
+    for key, value in (("name", "other"), ("model_name", "other"), ("kwargs", {"version": "0.146.0"})):
         lock = deepcopy(original)
         lock["trials"][0]["agent"][key] = value
         with pytest.raises(ValueError):

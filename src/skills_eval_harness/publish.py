@@ -161,6 +161,9 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
 - Selected skill SHA-256: `{provenance.selected_skill_sha256}`
 - Runtime version: `{provenance.runtime_version}`
 - Runtime SHA-256: `{provenance.runtime_sha256}`
+- Worker agent: `{manifest['agent']}` `{manifest['agent_version']}`
+- Agent image SHA-256: `{provenance.image_digests['agent']}`
+- Node version: `{manifest['node_version']}`
 - Harbor version: `{provenance.harbor_version}`
 - Complete cells: `{summary['observed_cells']}` / `{summary['expected_cells']}`
 - Sealed evidence: [`{evidence_link}`]({evidence_link}/run-seal.json)

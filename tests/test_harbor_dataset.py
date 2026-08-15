@@ -46,7 +46,16 @@ def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Pat
     assert parsed.agent.allowed_hosts == list(load_config(ROOT / "evals/config.yaml").container.agent_hosts["codex"])
     assert parsed.verifier.environment.network_mode.value == "no-network"
     dockerfile = (task / "environment/Dockerfile").read_text()
-    assert "@sha256:" in dockerfile
+    assert dockerfile.startswith(
+        "FROM skills-eval-agent-toolchain:node22.23.2-codex0.147.0-claude2.1.233@"
+        "sha256:778452e0c755ab2d7b5b79ebf3a1ed099cbc9942a7225717e7da108c3a5b3751\n"
+    )
+    assert "RUN " not in dockerfile
+    toolchain = Path("docker/agent-toolchain.Dockerfile").read_text()
+    assert "@openai/codex@0.147.0" in toolchain
+    assert "@anthropic-ai/claude-code@2.1.233" in toolchain
+    assert "node@22.23.2" in toolchain
+    assert "@latest" not in toolchain
     verifier = (task / "tests/verify.py").read_text()
     assert "setup_tool_calls" in verifier
     assert "task_tool_output_bytes" in verifier

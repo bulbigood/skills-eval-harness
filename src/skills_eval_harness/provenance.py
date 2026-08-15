@@ -41,6 +41,8 @@ class Provenance(BaseModel):
     config_sha256: str
     fixture_registry_sha256: str
     harbor_version: Literal["0.21.0"]
+    node_version: str
+    agent_versions: dict[str, str]
     task_checksums: dict[str, str]
     image_digests: dict[str, str]
     fixture_sources: dict[str, FixtureRevision]
@@ -75,6 +77,13 @@ class Provenance(BaseModel):
             raise ValueError("AGENTS template digest must be lowercase SHA-256")
         if not hashes or any(not SHA256.fullmatch(value) for value in hashes):
             raise ValueError("all provenance digests must be lowercase SHA-256")
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.node_version) is None:
+            raise ValueError("Node version must be an exact semantic version")
+        if set(self.agent_versions) != {"codex", "claude"} or any(
+            re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None
+            for value in self.agent_versions.values()
+        ):
+            raise ValueError("agent versions must bind codex and claude to exact semantic versions")
         return self
 
 
@@ -115,6 +124,7 @@ def verify_harbor_lock(
     n_concurrent: int,
     retries: int,
     agent_name: str,
+    agent_version: str,
     model: str,
     skill_enabled: bool,
 ) -> None:
@@ -160,7 +170,7 @@ def verify_harbor_lock(
         if (
             agent.get("resume_trajectory") is not False
             or agent.get("extra_allowed_hosts") != []
-            or agent.get("kwargs") != {}
+            or agent.get("kwargs") != {"version": agent_version}
             or agent.get("mcp_servers") != []
         ):
             raise ValueError("Harbor lock agent controls do not match the run plan")
