@@ -134,7 +134,7 @@ def test_seal_rejects_omitted_required_file(tmp_path: Path) -> None:
         verify_run_seal(run)
 
 
-def test_publisher_derives_pass_and_canonical_repository(tmp_path: Path) -> None:
+def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     root, run = setup(tmp_path)
     renamed = root / "arbitrary-relocated-bundle-name"
     run.rename(renamed)
@@ -145,20 +145,43 @@ def test_publisher_derives_pass_and_canonical_repository(tmp_path: Path) -> None
     assert "Overall suite verdict: **PASS**" in text
     assert "https://github.com/iwe-org/skills-eval-harness" in text
     assert "bulbigood" not in text
+    assert "Sealed evidence" not in text
     assert output.with_suffix(".md.sha256").is_file()
+    assert not (root / "published.evidence").exists()
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    assert set(staged) == {"published.md", "published.md.sha256"}
+
+
+def test_publisher_can_include_revalidated_evidence(tmp_path: Path) -> None:
+    root, run = setup(tmp_path)
+    output = root / "published.md"
+    publish(root=root, run_dir=run, output=output, include_evidence=True)
+    text = output.read_text()
+    assert "Sealed evidence" in text
     evidence = root / "published.evidence"
     assert (evidence / "summary.json").is_file()
     assert (evidence / "cells/arm--scenario--1.json").is_file()
     assert (evidence / "jobs/job/lock.json").is_file()
     assert (evidence / "device-telemetry.json").is_file()
-    seal = json.loads((renamed / "run-seal.json").read_text())
+    seal = json.loads((run / "run-seal.json").read_text())
     assert all(
         (evidence / relative).is_file() and sha256_file(evidence / relative) == digest
         for relative, digest in seal["files"].items()
     )
     assert (evidence / "run-seal.json").is_file()
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root, text=True, capture_output=True, check=True).stdout.splitlines()
-    assert set(staged) >= {"published.md", "published.md.sha256", "published.evidence/summary.json", "published.evidence/device-telemetry.json"}
+    assert set(staged) >= {
+        "published.md",
+        "published.md.sha256",
+        "published.evidence/summary.json",
+        "published.evidence/device-telemetry.json",
+    }
 
 
 def test_publisher_rejects_failed_incomplete_dirty_or_overwrite(tmp_path: Path) -> None:
@@ -172,8 +195,6 @@ def test_publisher_rejects_failed_incomplete_dirty_or_overwrite(tmp_path: Path) 
     output.unlink()
     output.with_suffix(".md.sha256").unlink()
     subprocess.run(["git", "reset", "-q"], cwd=root, check=True)
-    import shutil
-    shutil.rmtree(root / "published.evidence")
     (run / "summary.json").write_text(json.dumps({**summary, "pass": True, "observed_cells": 0}))
     seal_run(run)
     with pytest.raises(ValueError, match="incomplete"):

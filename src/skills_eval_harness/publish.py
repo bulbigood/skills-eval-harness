@@ -103,7 +103,7 @@ def _stage(root: Path, paths: tuple[Path, ...]) -> None:
         temporary_index.unlink(missing_ok=True)
 
 
-def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
+def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool = False) -> Path:
     summary = validate_run_bundle(run_dir, require_seal=True)
     telemetry = validate_device_telemetry(run_dir / "device-telemetry.json")
     if (
@@ -133,7 +133,7 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     root = root.resolve()
     evidence_dir = output.with_suffix(".evidence")
     checksum = output.with_suffix(output.suffix + ".sha256")
-    if output.exists() or checksum.exists() or evidence_dir.exists():
+    if output.exists() or checksum.exists() or (include_evidence and evidence_dir.exists()):
         raise FileExistsError("refusing to replace an existing publication")
     if not output.is_relative_to(root):
         raise ValueError("publication outputs must be inside the Git repository")
@@ -176,7 +176,11 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
             "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
         })
     telemetry_json = canonical_json(telemetry_summary).decode()
-    evidence_link = evidence_dir.name
+    evidence_line = (
+        f"- Sealed evidence: [`{evidence_dir.name}`]({evidence_dir.name}/run-seal.json)\n"
+        if include_evidence
+        else ""
+    )
     suite_verdict = "PASS" if summary.get("pass") is True else "FAIL"
     report = f"""# {run_id}
 
@@ -193,7 +197,7 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
 - Node version: `{manifest['node_version']}`
 - Harbor version: `{provenance.harbor_version}`
 - Complete cells: `{summary['observed_cells']}` / `{summary['expected_cells']}`
-- Sealed evidence: [`{evidence_link}`]({evidence_link}/run-seal.json)
+{evidence_line}
 
 ## Verified statistics
 
@@ -223,23 +227,25 @@ The report is derived from the bundled, sealed machine-readable evidence. Device
     temporary_checksum = temporary_root / checksum.name
     created: list[Path] = []
     try:
-        temporary_evidence.mkdir(parents=True)
-        for relative in _sealed_paths(run_dir):
-            destination = temporary_evidence / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(run_dir / relative, destination)
-        shutil.copy2(run_dir / "run-seal.json", temporary_evidence / "run-seal.json")
-        validate_run_bundle(temporary_evidence, require_seal=True)
+        if include_evidence:
+            temporary_evidence.mkdir(parents=True)
+            for relative in _sealed_paths(run_dir):
+                destination = temporary_evidence / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(run_dir / relative, destination)
+            shutil.copy2(run_dir / "run-seal.json", temporary_evidence / "run-seal.json")
+            validate_run_bundle(temporary_evidence, require_seal=True)
         atomic_write(temporary_output, report.encode())
         digest = sha256_bytes(report.encode())
         atomic_write(temporary_checksum, f"{digest}  {output.name}\n".encode())
-        temporary_evidence.rename(evidence_dir)
-        created.append(evidence_dir)
+        if include_evidence:
+            temporary_evidence.rename(evidence_dir)
+            created.append(evidence_dir)
         os.link(temporary_checksum, checksum)
         created.append(checksum)
         os.link(temporary_output, output)
         created.append(output)
-        _stage(root, (output, checksum, evidence_dir))
+        _stage(root, (output, checksum, *((evidence_dir,) if include_evidence else ())))
     except Exception:
         for path in reversed(created):
             if path.is_dir():

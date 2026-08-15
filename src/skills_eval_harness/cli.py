@@ -705,6 +705,11 @@ def parser() -> argparse.ArgumentParser:
     publish_parser = sub.add_parser("publish")
     publish_parser.add_argument("run")
     publish_parser.add_argument("output")
+    publish_parser.add_argument(
+        "--include-evidence",
+        action="store_true",
+        help="copy and stage the sealed evidence bundle (default: report and checksum only)",
+    )
     return result
 
 
@@ -717,5 +722,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "run":
         run(args)
     elif args.command == "publish":
-        publish(root=ROOT, run_dir=Path(args.run), output=Path(args.output))
+        publish(
+            root=ROOT,
+            run_dir=Path(args.run),
+            output=Path(args.output),
+            include_evidence=args.include_evidence,
+        )
     return 0

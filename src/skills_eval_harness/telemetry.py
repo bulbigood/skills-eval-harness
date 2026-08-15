@@ -331,8 +331,14 @@ class TelemetryRecorder:
         network_rx, network_tx = _network_totals()
         disk_read, disk_write = _disk_totals()
         rootfs_used, rootfs_free = _rootfs_usage()
+        measured_elapsed_ms = max(0, int((time.monotonic() - self.started_monotonic) * 1000))
+        elapsed_ms = (
+            max(measured_elapsed_ms, self.samples[-1].elapsed_ms + 1)
+            if self.samples
+            else measured_elapsed_ms
+        )
         counters = {
-            "elapsed_ms": max(0, int((time.monotonic() - self.started_monotonic) * 1000)),
+            "elapsed_ms": elapsed_ms,
             "network_rx_bytes": network_rx,
             "network_tx_bytes": network_tx,
             "disk_read_bytes": disk_read,

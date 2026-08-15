@@ -32,6 +32,13 @@ def test_codex_auth_cli_supports_api_key_and_explicit_chatgpt_modes(capsys: pyte
     assert "--judge-jobs JUDGE_JOBS" in help_text
 
 
+def test_publish_evidence_is_opt_in() -> None:
+    without_evidence = parser().parse_args(["publish", "run", "report.md"])
+    with_evidence = parser().parse_args(["publish", "run", "report.md", "--include-evidence"])
+    assert without_evidence.include_evidence is False
+    assert with_evidence.include_evidence is True
+
+
 def test_global_concurrency_defaults_to_two_and_can_be_overridden() -> None:
     config = load_config(ROOT / "evals/config.yaml")
     args = parser().parse_args([

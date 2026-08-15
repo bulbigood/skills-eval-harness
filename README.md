@@ -59,14 +59,12 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 Completed trials with deterministic task failures remain valid, judged experimental outcomes. Exceptions, malformed verifier evidence, judge failures, missing cells, or telemetry failures remain invalid. `summary.valid` represents evidence integrity; `summary.pass` describes the benchmark result. A structurally valid failing production benchmark may therefore be sealed and published with an explicit **FAIL** verdict.
 
-`device-telemetry.json` persists CPU, memory, default-route network, whole-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication revalidates the sealed production bundle and stages its report, checksum, telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
+`device-telemetry.json` persists CPU, memory, default-route network, physical-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication always revalidates the sealed production bundle and stages the report plus checksum. The evidence bundle is omitted by default; pass `--include-evidence` to additionally copy, revalidate, and stage telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
 
 ## Suites
 
 - [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md)
 - [Skill-guidance efficiency A/B](docs/evals/skill-guidance-efficiency-ab.md)
-
-Published historical evidence remains available under [`docs/evals/results`](docs/evals/results). Those reports are static records from the previous harness and are not accepted as inputs by the Harbor pipeline.
 
 ## Commands
 
