@@ -50,6 +50,8 @@ class CellRecord(BaseModel):
     valid: bool
     pass_: bool = Field(alias="pass")
     required_pass: bool
+    scenario_outcome: Literal["passed", "failed"] = "passed"
+    scenario_failures: list[str] = Field(default_factory=list)
     invalid_reason: str | None = None
     scores: dict[str, float] = Field(default_factory=dict)
     wall_time_seconds: float | None = Field(default=None, ge=0)
@@ -73,6 +75,10 @@ class CellRecord(BaseModel):
         if not set(self.scores).issubset(DIMENSIONS):
             raise ValueError("cell contains unknown score dimensions")
         if self.valid:
+            if (self.scenario_outcome == "failed") != bool(self.scenario_failures):
+                raise ValueError("scenario failures must be present exactly for failed scenario outcomes")
+            if self.scenario_outcome == "failed" and (self.pass_ or self.required_pass):
+                raise ValueError("failed scenario outcomes cannot pass")
             required = (
                 bool(self.scores)
                 and self.invalid_reason is None
@@ -132,7 +138,20 @@ def validate_job(
 
 def trial_mechanical_success(trial: TrialResult) -> bool:
     rewards = trial.verifier_result.rewards if trial.verifier_result else None
-    return bool(rewards and rewards.get("infrastructure") == 1)
+    return trial.exception_info is None and bool(rewards and rewards.get("infrastructure") == 1.0)
+
+
+def trial_scenario_outcome(job_dir: Path, trial: TrialResult) -> tuple[Literal["passed", "failed"], list[str]]:
+    """Classify deterministic task failure without conflating it with evidence validity."""
+    path = job_dir / trial.trial_name / "verifier/mechanical.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    failures = raw.get("failures")
+    if not isinstance(failures, list) or any(not isinstance(value, str) or not value for value in failures):
+        raise ValueError("mechanical verifier evidence has invalid failures")
+    success = trial_mechanical_success(trial)
+    if success == bool(failures):
+        raise ValueError("mechanical verifier reward and failure evidence disagree")
+    return ("passed", []) if success else ("failed", failures)
 
 
 def _final_response(path: Path) -> str:
@@ -153,10 +172,18 @@ def _final_response(path: Path) -> str:
 def trial_evidence(job_dir: Path, trial_name: str) -> list[tuple[EvidenceKind, str]]:
     root = job_dir / trial_name
     trajectory = root / "agent/trajectory.json"
+    result_path = root / "result.json"
+    infrastructure_reward = 1.0
+    if result_path.is_file():
+        trial = TrialResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+        infrastructure_reward = trial.verifier_result.rewards.get("infrastructure", 0.0)
     if not trajectory.is_file():
         raise ValueError(f"trial {trial_name} has no trajectory evidence")
     evidence: list[tuple[EvidenceKind, str]] = [
-        ("infrastructure", "Harbor separate verifier returned infrastructure=1"),
+        (
+            "infrastructure",
+            f"Harbor separate verifier returned infrastructure={infrastructure_reward:g}",
+        ),
         ("response", f"trajectory sha256={sha256_file(trajectory)}\nfinal assistant response:\n{_final_response(trajectory)}"),
     ]
     paths = {
@@ -305,6 +332,10 @@ def summarize_cells(
         ).items()))
         for arm in arms
     }
+    scenario_failures_by_arm = {
+        arm: sum(cell["scenario_outcome"] == "failed" for cell in normalized if cell["arm"] == arm)
+        for arm in arms
+    }
     planned_by_arm = {arm: sum(identity[0] == arm for identity in expected_identities) for arm in arms}
     paired: dict[str, object] = {}
     excluded_pairs: list[dict[str, object]] = []
@@ -365,7 +396,7 @@ def summarize_cells(
             for name, rows in sorted(groups.items())
         }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "expected_cells": len(expected_identities),
         "observed_cells": len(normalized),
         "valid": valid,
@@ -376,6 +407,7 @@ def summarize_cells(
             "invalid_cells_by_arm": invalid_by_arm,
             "completion_rate_by_arm": {arm: valid_by_arm[arm] / planned_by_arm[arm] for arm in arms},
             "invalid_reasons_by_arm": reasons_by_arm,
+            "scenario_failures_by_arm": scenario_failures_by_arm,
             "missingness_by_scenario": grouped_missingness("scenario_id"),
             "missingness_by_family": grouped_missingness("family"),
             "common_valid_pairs": len(common_valid_keys) if paired_run else None,

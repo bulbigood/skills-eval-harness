@@ -51,11 +51,15 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 `--judge-auth chatgpt` runs the structured judge through an ephemeral, read-only Codex CLI sandbox using a separate temporary copy of the same explicitly selected login. `--judge-auth api-key` preserves the Responses API backend and requires `OPENAI_API_KEY`. Both backends feed the same strict local schema and evidence-reference validator. Claude workers continue to require `ANTHROPIC_API_KEY`.
 
-### Global concurrency
+### Concurrency
 
-`execution.global_concurrency` defaults to `2`. `--jobs N` overrides it for one run. The value is a global Harbor trial ceiling, not a per-arm allowance: paired arms run concurrently with an equal static share (`1 + 1` at the default). An odd spare slot remains unused rather than biasing one arm. If the limit is smaller than the arm count, arms run in deterministic one-slot batches. The resolved allocation is recorded in `run-manifest.json`.
+`execution.global_concurrency` defaults to `2`; `--jobs N` overrides the global Harbor worker ceiling. Paired arms receive an equal static share (`1 + 1` by default). Odd spare slots remain unused rather than biasing one arm.
 
-Every completed run records a terminal cell for every planned identity and produces schema-constrained `device-telemetry.json` containing numeric capacity and load measurements only. A failing suite is sealed for diagnosis and exits nonzero. `--run-purpose diagnostic` is the default and can never be published. Publication accepts only a passing `production` run with at least the suite's preregistered `default_samples`, revalidates and recomputes the sealed bundle, then stages the report, checksum, telemetry, cells, Harbor locks/results, trajectories, semantic oracle, verifier evidence, immutable inputs, manifests, and seal. Unexpected telemetry fields such as hostnames, paths, commands, labels, network identifiers, or credential material fail closed.
+`judge.concurrency` defaults to `4`; `--judge-jobs N` overrides judge concurrency independently. Judged cells execute concurrently but are written in canonical input order. Both resolved concurrency values are bound in the manifest and provenance.
+
+Completed trials with deterministic task failures remain valid, judged experimental outcomes. Exceptions, malformed verifier evidence, judge failures, missing cells, or telemetry failures remain invalid. `summary.valid` represents evidence integrity; `summary.pass` describes the benchmark result. A structurally valid failing production benchmark may therefore be sealed and published with an explicit **FAIL** verdict.
+
+`device-telemetry.json` persists CPU, memory, default-route network, whole-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication revalidates the sealed production bundle and stages its report, checksum, telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
 
 ## Suites
 

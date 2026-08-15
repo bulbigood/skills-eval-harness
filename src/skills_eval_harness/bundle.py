@@ -18,7 +18,7 @@ from .hashing import (
 from .judge import Evidence, build_evidence, build_judge_messages, derive_cell_outcome, validate_verdict
 from .models import load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
-from .results import CellRecord, summarize_cells, trial_evidence, trial_mechanical_success, validate_job
+from .results import CellRecord, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
 from .telemetry import validate_device_telemetry
 
 
@@ -181,12 +181,19 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
         for sample in range(1, samples + 1)
     }
     expected_evidence: dict[tuple[str, str, int], list[dict]] = {}
+    expected_scenario_outcomes: dict[tuple[str, str, int], str] = {}
+    expected_scenario_failures: dict[tuple[str, str, int], list[str]] = {}
     observed_trials: set[tuple[str, str, int]] = set()
     profile = config.agents[manifest["agent"]]
     if manifest.get("agent_version") != profile.version:
         raise ValueError("run manifest agent version does not match the sealed config")
     if manifest.get("node_version") != config.container.node_version:
         raise ValueError("run manifest Node version does not match the sealed config")
+    has_judge_concurrency = "judge_concurrency" in manifest["execution"]
+    if has_judge_concurrency != (provenance.judge_concurrency is not None):
+        raise ValueError("judge concurrency must be present in both manifest and provenance")
+    if has_judge_concurrency and manifest["execution"]["judge_concurrency"] != provenance.judge_concurrency:
+        raise ValueError("judge concurrency does not match sealed provenance")
     batches = manifest["execution"]["arm_concurrency_batches"]
     for arm in arms:
         arm_id = arm["id"]
@@ -240,8 +247,11 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             if identity in observed_trials or identity not in expected_identities:
                 raise ValueError("Harbor results do not match the run identity matrix")
             observed_trials.add(identity)
-            if trial.exception_info is not None or not trial_mechanical_success(trial):
+            if trial.exception_info is not None:
                 continue
+            expected_scenario_outcomes[identity], expected_scenario_failures[identity] = trial_scenario_outcome(
+                job_dir, trial
+            )
             expected_evidence[identity] = [
                 item.model_dump(mode="json")
                 for item in build_evidence(trial_evidence(job_dir, trial.trial_name))
@@ -263,6 +273,10 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             identity = (cell["arm"], cell["scenario_id"], cell["sample"])
             if cell["evidence"] != expected_evidence[identity]:
                 raise ValueError("stored cell evidence does not reproduce from Harbor artifacts")
+            if cell["scenario_outcome"] != expected_scenario_outcomes[identity]:
+                raise ValueError("stored scenario outcome does not reproduce from Harbor artifacts")
+            if cell["scenario_failures"] != expected_scenario_failures[identity]:
+                raise ValueError("stored scenario failures do not reproduce from Harbor artifacts")
             evidence = tuple(Evidence.model_validate(item) for item in cell["evidence"])
             oracle_items = [item for item in evidence if item.kind == "oracle"]
             if len(oracle_items) != 1 or "\n" not in oracle_items[0].text:
@@ -301,6 +315,9 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
                 role=arm.get("role"),
                 agent=manifest["agent"],
             )
+            if expected_scenario_outcomes[identity] == "failed":
+                expected_pass = False
+                expected_required = False
             if (
                 cell["scores"] != expected_scores
                 or cell["pass"] is not expected_pass
@@ -331,6 +348,17 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
         samples_per_identity=samples,
         preregistered_samples=manifest["suite"]["default_samples"],
     )
+    if stored_summary.get("schema_version") == 3:
+        if has_judge_concurrency:
+            raise ValueError("current bundles cannot downgrade to summary schema 3")
+        # Historical bundles predate explicit tested-scenario outcome fields.
+        recomputed["schema_version"] = 3
+        recomputed["reliability"].pop("scenario_failures_by_arm", None)
+        for cell in recomputed["cells"]:
+            cell.pop("scenario_outcome", None)
+            cell.pop("scenario_failures", None)
+    elif stored_summary.get("schema_version") != 4 or not has_judge_concurrency:
+        raise ValueError("summary schema does not match the sealed execution generation")
     if canonical_json(recomputed) != canonical_json(stored_summary):
         raise ValueError("summary does not recompute from sealed cells")
 

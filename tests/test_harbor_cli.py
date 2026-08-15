@@ -8,6 +8,8 @@ from skills_eval_harness.cli import (
     _codex_auth_args,
     _required_credentials,
     _resolve_global_concurrency,
+    _resolve_judge_concurrency,
+    _run_concurrently_in_order,
     _scenario_family,
     parser,
     verify_agent_image,
@@ -27,6 +29,7 @@ def test_codex_auth_cli_supports_api_key_and_explicit_chatgpt_modes(capsys: pyte
     assert "--codex-auth-json" in help_text
     assert "--judge-auth {api-key,chatgpt}" in help_text
     assert "--jobs JOBS" in help_text
+    assert "--judge-jobs JUDGE_JOBS" in help_text
 
 
 def test_global_concurrency_defaults_to_two_and_can_be_overridden() -> None:
@@ -41,6 +44,42 @@ def test_global_concurrency_defaults_to_two_and_can_be_overridden() -> None:
     assert _resolve_global_concurrency(6, config) == 6
     with pytest.raises(ValueError, match="global concurrency"):
         _resolve_global_concurrency(0, config)
+
+
+def test_judge_concurrency_defaults_to_four_and_can_be_overridden() -> None:
+    config = load_config(ROOT / "evals/config.yaml")
+    args = parser().parse_args([
+        "run", "--suite", "suite.yaml", "--skill-source", "skill", "--runtime", "iwe",
+        "--runtime-version", "0.18.0", "--fixture", "fixture=.", "--output", "out",
+    ])
+    assert config.judge.concurrency == 4
+    assert args.judge_jobs is None
+    assert _resolve_judge_concurrency(args.judge_jobs, config) == 4
+    assert _resolve_judge_concurrency(7, config) == 7
+    with pytest.raises(ValueError, match="judge concurrency"):
+        _resolve_judge_concurrency(0, config)
+
+
+def test_concurrent_judging_is_bounded_and_preserves_input_order() -> None:
+    import threading
+    import time
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def work(value: int) -> int:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02 * (4 - value))
+        with lock:
+            active -= 1
+        return value * 10
+
+    assert _run_concurrently_in_order([1, 2, 3], 2, work) == [10, 20, 30]
+    assert peak == 2
 
 
 def test_global_concurrency_is_balanced_across_paired_arms() -> None:

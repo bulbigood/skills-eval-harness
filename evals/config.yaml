@@ -38,6 +38,7 @@ judge:
   credential_env: OPENAI_API_KEY
   reasoning: low
   timeout_seconds: 300
+  concurrency: 4
 execution:
   timeout_seconds: 1800
   global_concurrency: 2

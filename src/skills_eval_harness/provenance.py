@@ -49,6 +49,8 @@ class Provenance(BaseModel):
     agents_template_sha256: str | None = None
     worker_auth_mode: Literal["api-key", "chatgpt"] = "api-key"
     judge_auth_mode: Literal["api-key", "chatgpt"] = "api-key"
+    # Optional only so historical schema-v1 bundles remain replayable.
+    judge_concurrency: int | None = None
 
     def validated(self) -> "Provenance":
         if not COMMIT.fullmatch(self.source_commit) or not COMMIT.fullmatch(self.harness_commit):
@@ -84,6 +86,8 @@ class Provenance(BaseModel):
             for value in self.agent_versions.values()
         ):
             raise ValueError("agent versions must bind codex and claude to exact semantic versions")
+        if self.judge_concurrency is not None and not 1 <= self.judge_concurrency <= 32:
+            raise ValueError("judge concurrency must be between 1 and 32")
         return self
 
 

@@ -113,8 +113,8 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     ).validated()
     if provenance.harness_dirty:
         raise ValueError("publication requires a clean harness commit")
-    if summary.get("valid") is not True or summary.get("pass") is not True:
-        raise ValueError("publication requires a complete valid passing run")
+    if summary.get("valid") is not True:
+        raise ValueError("publication requires complete structurally valid evidence")
     if summary.get("observed_cells") != summary.get("expected_cells"):
         raise ValueError("publication rejects incomplete runs")
     if (
@@ -138,6 +138,8 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     ).decode()
     samples = telemetry.samples
     telemetry_summary = {
+        "schema_version": telemetry.schema_version,
+        "scope": getattr(telemetry.host, "telemetry_scope", "whole-host"),
         "logical_cpus": telemetry.host.logical_cpus,
         "total_memory_bytes": telemetry.host.total_memory_bytes,
         "total_swap_bytes": telemetry.host.total_swap_bytes,
@@ -149,11 +151,27 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
         "running_containers_max": max(sample.running_containers for sample in samples),
         "docker_oom_events": telemetry.docker_oom_events,
     }
+    if telemetry.schema_version == 2:
+        telemetry_summary.update({
+            "terminal_status": telemetry.terminal_status,
+            "sampling_errors": telemetry.sampling_errors,
+            "network_rx_bytes_per_second_max": telemetry.peaks.network_rx_bytes_per_second,
+            "network_tx_bytes_per_second_max": telemetry.peaks.network_tx_bytes_per_second,
+            "disk_read_bytes_per_second_max": telemetry.peaks.disk_read_bytes_per_second,
+            "disk_write_bytes_per_second_max": telemetry.peaks.disk_write_bytes_per_second,
+            "rootfs_used_bytes_max": telemetry.peaks.rootfs_used_bytes,
+            "rootfs_free_bytes_min": telemetry.minima.rootfs_free_bytes,
+            "network_rx_bytes_total": telemetry.totals.network_rx_bytes,
+            "network_tx_bytes_total": telemetry.totals.network_tx_bytes,
+            "disk_read_bytes_total": telemetry.totals.disk_read_bytes,
+            "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
+        })
     telemetry_json = canonical_json(telemetry_summary).decode()
     evidence_link = evidence_dir.name
+    suite_verdict = "PASS" if summary.get("pass") is True else "FAIL"
     report = f"""# {run_id}
 
-- Overall suite verdict: **PASS**
+- Overall suite verdict: **{suite_verdict}**
 - Harness repository: [{repository}]({repository})
 - Harness commit: `{provenance.harness_commit}`
 - Source: [{provenance.source_url}]({provenance.source_url})

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,7 +12,12 @@ from pydantic import ValidationError
 from skills_eval_harness.cli import _required_cell_pass, _scenario_family
 from skills_eval_harness.judge import JudgeVerdict
 from skills_eval_harness.models import Suite
-from skills_eval_harness.results import CellRecord, summarize_cells as _summarize_cells, trial_evidence
+from skills_eval_harness.results import (
+    CellRecord,
+    summarize_cells as _summarize_cells,
+    trial_evidence,
+    trial_scenario_outcome,
+)
 
 
 def summarize_cells(cells: list[dict], identities: set[tuple[str, str, int]], **kwargs: Any) -> dict:
@@ -88,6 +94,21 @@ def test_invalid_cell_can_never_pass_suite() -> None:
     assert summary["reliability"]["invalid_reasons_by_arm"] == {
         "skill": {"judge_validation_failed": 1}
     }
+
+
+def test_scenario_failure_is_valid_evidence_and_not_harness_missingness() -> None:
+    cell = valid_cell("no-skill", 1, score=0)
+    cell.update({
+        "pass": False,
+        "required_pass": False,
+        "scenario_outcome": "failed",
+        "scenario_failures": ["hard tool-call maximum exceeded"],
+    })
+    summary = summarize_cells([cell], {("no-skill", "one", 1)})
+    assert summary["valid"] is True
+    assert summary["pass"] is False
+    assert summary["reliability"]["invalid_cells_by_arm"] == {"no-skill": 0}
+    assert summary["reliability"]["scenario_failures_by_arm"] == {"no-skill": 1}
 
 
 def test_invalid_cell_reason_is_closed_enum() -> None:
@@ -218,3 +239,22 @@ def test_missing_pair_is_reported_and_never_contaminates_paired_statistics() -> 
         "skill:judge_validation_failed"
     ]
     assert summary["pass"] is False
+
+
+def test_mechanical_scenario_failure_is_distinct_from_malformed_verifier_evidence(tmp_path: Path) -> None:
+    trial = SimpleNamespace(
+        trial_name="trial",
+        exception_info=None,
+        verifier_result=SimpleNamespace(rewards={"infrastructure": 0.0}),
+    )
+    verifier = tmp_path / "trial/verifier"
+    verifier.mkdir(parents=True)
+    mechanical = verifier / "mechanical.json"
+    mechanical.write_text(json.dumps({"failures": ["hard tool-call maximum exceeded"]}))
+    assert trial_scenario_outcome(tmp_path, trial) == (
+        "failed",
+        ["hard tool-call maximum exceeded"],
+    )
+    mechanical.write_text(json.dumps({"failures": []}))
+    with pytest.raises(ValueError, match="disagree"):
+        trial_scenario_outcome(tmp_path, trial)

@@ -146,8 +146,13 @@ def test_publisher_rejects_failed_incomplete_dirty_or_overwrite(tmp_path: Path) 
     summary = {"valid": True, "pass": False, "expected_cells": 1, "observed_cells": 1}
     (run / "summary.json").write_text(json.dumps(summary))
     seal_run(run)
-    with pytest.raises(ValueError, match="passing"):
-        publish(root=root, run_dir=run, output=output)
+    publish(root=root, run_dir=run, output=output)
+    assert "Overall suite verdict: **FAIL**" in output.read_text()
+    output.unlink()
+    output.with_suffix(".md.sha256").unlink()
+    subprocess.run(["git", "reset", "-q"], cwd=root, check=True)
+    import shutil
+    shutil.rmtree(root / "published.evidence")
     (run / "summary.json").write_text(json.dumps({**summary, "pass": True, "observed_cells": 0}))
     seal_run(run)
     with pytest.raises(ValueError, match="incomplete"):

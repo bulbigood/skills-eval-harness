@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -47,8 +48,8 @@ from .security import (
     validate_codex_auth,
 )
 from .source import materialize_git_identity, resolve_skill, verify_runtime, write_git_commit_object
-from .results import trial_evidence, trial_mechanical_success, validate_job, write_summary
-from .telemetry import TelemetryRecorder
+from .results import trial_evidence, trial_scenario_outcome, validate_job, write_summary
+from .telemetry import TelemetryRecorder, set_terminal_status
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "evals/config.yaml"
@@ -138,6 +139,7 @@ def prepare(args: argparse.Namespace) -> Path:
     verify_agent_image(config)
     profile = config.agents[args.agent]
     global_concurrency = _resolve_global_concurrency(args.jobs, config)
+    judge_concurrency = _resolve_judge_concurrency(args.judge_jobs, config)
     suite_path = Path(args.suite).resolve()
     suite = load_suite(suite_path)
     samples = suite.default_samples if args.samples is None else args.samples
@@ -267,6 +269,7 @@ def prepare(args: argparse.Namespace) -> Path:
         agents_template_sha256=sha256_bytes(agents_template) if agents_template is not None else None,
         worker_auth_mode=getattr(args, "codex_auth", "api-key"),
         judge_auth_mode=getattr(args, "judge_auth", "api-key"),
+        judge_concurrency=judge_concurrency,
     )
     manifest = {
         "schema_version": 1,
@@ -283,6 +286,7 @@ def prepare(args: argparse.Namespace) -> Path:
         "run_purpose": getattr(args, "run_purpose", "diagnostic"),
         "execution": {
             "global_concurrency": global_concurrency,
+            "judge_concurrency": judge_concurrency,
             "arm_concurrency_batches": _arm_concurrency_batches(
                 tuple(arm.id for arm in suite.arms), global_concurrency
             ),
@@ -321,6 +325,21 @@ def _resolve_global_concurrency(value: int | None, config) -> int:
     if not 1 <= total <= 32:
         raise ValueError("global concurrency must be between 1 and 32")
     return total
+
+
+def _resolve_judge_concurrency(value: int | None, config) -> int:
+    total = config.judge.concurrency if value is None else value
+    if not 1 <= total <= 32:
+        raise ValueError("judge concurrency must be between 1 and 32")
+    return total
+
+
+def _run_concurrently_in_order(items: list, jobs: int, function):
+    """Bound concurrent work while preserving canonical input order."""
+    if not 1 <= jobs <= 32:
+        raise ValueError("judge concurrency must be between 1 and 32")
+    with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="skills-eval-judge") as executor:
+        return list(executor.map(function, items))
 
 
 def _arm_concurrency_batches(arm_ids: tuple[str, ...], total: int) -> tuple[dict[str, int], ...]:
@@ -383,20 +402,32 @@ def run(args: argparse.Namespace) -> Path:
         )
     finally:
         try:
-            telemetry.stop()
+            telemetry.stop("failed" if sys.exc_info()[0] is not None else "completed")
         finally:
             for root in (run_root / "jobs", run_root / "cells", run_root / "summary.json"):
                 if root.exists():
                     redact_secret_content(root, secret_needles)
-            assert_no_secret_content(
-                (run_root / "jobs", run_root / "cells", run_root / "summary.json"),
-                secret_needles,
-            )
-    validate_run_bundle(run_root, require_seal=False)
-    seal_run(run_root)
-    summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
-    if summary.get("pass") is not True:
-        raise RuntimeError(f"evaluation completed with a failing terminal outcome: {run_root}")
+            try:
+                assert_no_secret_content(
+                    (run_root / "jobs", run_root / "cells", run_root / "summary.json"),
+                    secret_needles,
+                )
+            except Exception:
+                set_terminal_status(run_root / "device-telemetry.json", "failed")
+                raise
+    try:
+        validate_run_bundle(run_root, require_seal=False)
+        summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+        if summary.get("valid") is not True:
+            set_terminal_status(run_root / "device-telemetry.json", "failed")
+            validate_run_bundle(run_root, require_seal=False)
+            seal_run(run_root)
+            raise RuntimeError(f"evaluation completed with invalid terminal evidence: {run_root}")
+        seal_run(run_root)
+    except Exception:
+        if not (run_root / "run-seal.json").exists():
+            set_terminal_status(run_root / "device-telemetry.json", "failed")
+        raise
     return run_root
 
 
@@ -433,6 +464,9 @@ def _execute_run(
     job_dirs: dict[str, Path] = {}
     job_errors: dict[str, str] = {}
     global_concurrency = manifest["execution"]["global_concurrency"]
+    judge_concurrency = manifest["execution"]["judge_concurrency"]
+    if provenance.judge_concurrency != judge_concurrency:
+        raise ValueError("judge concurrency provenance mismatch")
     arms = {arm["id"]: arm for arm in manifest["suite"]["arms"]}
 
     def run_arm(arm_id: str, arm_concurrency: int, staged_auth: Path | None) -> Path:
@@ -538,17 +572,18 @@ def _execute_run(
             first_role = "treatment" if sample % 2 else "control"
             return scenario_id, sample, 0 if arm["role"] == first_role else 1
 
-        for arm, trial, job_dir in sorted(trials, key=trial_identity):
+        def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None]:
+            arm, trial, job_dir = item
             arm_id = arm["id"]
             task_id = trial.task_name.removeprefix("iwe/")
             scenario_id, sample_text = task_id.rsplit("--sample-", 1)
             sample = int(sample_text)
             if trial.exception_info is not None:
-                record_invalid(arm, scenario_id, sample, "trial_exception")
-                continue
-            if not trial_mechanical_success(trial):
-                record_invalid(arm, scenario_id, sample, "deterministic_verifier_failed")
-                continue
+                return arm, scenario_id, sample, None, "trial_exception"
+            try:
+                scenario_outcome, failures = trial_scenario_outcome(job_dir, trial)
+            except (OSError, ValueError, json.JSONDecodeError):
+                return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
                 verdict = judge_cell(
@@ -559,13 +594,16 @@ def _execute_run(
                     auth_json=staged_judge_auth,
                 )
             except Exception:
-                record_invalid(arm, scenario_id, sample, "judge_validation_failed")
-                continue
+                return arm, scenario_id, sample, None, "judge_validation_failed"
             scores, passed, required = derive_cell_outcome(
                 verdict,
                 role=arm["role"],
                 agent=args.agent,
             )
+            if scenario_outcome == "failed":
+                passed = False
+                required = False
+
             wall_time = (trial.finished_at - trial.started_at).total_seconds() if trial.finished_at and trial.started_at else None
             n_input, n_cache, n_output, cost = trial.compute_token_cost_totals()
             cell = {
@@ -576,13 +614,15 @@ def _execute_run(
                 "valid": True,
                 "pass": passed,
                 "required_pass": required,
+                "scenario_outcome": scenario_outcome,
+                "scenario_failures": failures,
                 "scores": scores,
                 "wall_time_seconds": wall_time,
                 "n_input_tokens": n_input,
                 "n_cache_tokens": n_cache,
                 "n_output_tokens": n_output,
                 "cost_usd": cost,
-                "evidence": [item.model_dump(mode="json") for item in evidence],
+                "evidence": [evidence_item.model_dump(mode="json") for evidence_item in evidence],
                 "judge_messages": build_judge_messages(
                     scenario=catalog[scenario_id],
                     evidence=evidence,
@@ -590,8 +630,18 @@ def _execute_run(
                 ),
                 "verdict": verdict.model_dump(mode="json"),
             }
+            return arm, scenario_id, sample, cell, None
+
+        ordered_trials = sorted(trials, key=trial_identity)
+        for arm, scenario_id, sample, cell, invalid_reason in _run_concurrently_in_order(
+            ordered_trials, judge_concurrency, judge_trial
+        ):
+            if invalid_reason is not None:
+                record_invalid(arm, scenario_id, sample, invalid_reason)
+                continue
+            assert cell is not None
             cells.append(cell)
-            atomic_write_json(run_root / "cells" / f"{arm_id}--{scenario_id}--{sample}.json", cell)
+            atomic_write_json(run_root / "cells" / f"{arm['id']}--{scenario_id}--{sample}.json", cell)
         control_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "control"), None)
         treatment_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "treatment"), None)
         expected_identities = {
@@ -630,6 +680,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--agent", choices=("codex", "claude"), default="codex")
         command.add_argument("--samples", type=int, help="samples per scenario (default: suite default_samples)")
         command.add_argument("--jobs", type=int, help="global Harbor trial concurrency across all arms (default: config value)")
+        command.add_argument("--judge-jobs", type=int, help="concurrent judge calls (default: config value, normally 4)")
         command.add_argument("--scenario", action="append")
         command.add_argument("--cache", default=".cache/skills-eval")
         command.add_argument("--output", required=True)

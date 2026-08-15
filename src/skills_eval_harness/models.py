@@ -85,6 +85,7 @@ class Judge(StrictModel):
     credential_env: Literal["OPENAI_API_KEY"]
     reasoning: Literal["low", "medium", "high"]
     timeout_seconds: int = Field(ge=1)
+    concurrency: int = Field(default=4, ge=1, le=32)
 
 class Execution(StrictModel):
     timeout_seconds: int = Field(ge=1)
