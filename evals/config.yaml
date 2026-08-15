@@ -29,7 +29,6 @@ agents:
     model: anthropic/claude-sonnet-4-6
     credential_env: ANTHROPIC_API_KEY
 judge:
-  provider: openai
   model: gpt-5.6-sol
   credential_env: OPENAI_API_KEY
   reasoning: low
@@ -38,3 +37,7 @@ execution:
   timeout_seconds: 1800
   global_concurrency: 2
   retries: 0
+runtimes:
+  "0.18.0": 12eb77af823b04472a2b92ceb0d5bacef4e1eda1b38ba0dadfe8f7c33a86ce6c
+skill_repositories:
+  - https://github.com/iwe-org/skills

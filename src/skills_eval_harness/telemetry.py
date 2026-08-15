@@ -90,6 +90,7 @@ class TelemetryRecorder:
         self.stop_event = threading.Event()
         self.previous_cpu = _cpu_totals()
         self.oom_process: subprocess.Popen[str] | None = None
+        self.stopped = False
         self.thread = threading.Thread(target=self._loop, name="sanitized-device-telemetry", daemon=True)
 
     def start(self) -> None:
@@ -105,8 +106,25 @@ class TelemetryRecorder:
             )
         except OSError:
             self.oom_process = None
-        self._sample()
-        self.thread.start()
+        try:
+            self._sample()
+            self.thread.start()
+        except Exception:
+            if self.oom_process is not None:
+                self.oom_process.terminate()
+                try:
+                    self.oom_process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.oom_process.kill()
+                    try:
+                        self.oom_process.wait(timeout=10)
+                    except subprocess.SubprocessError:
+                        pass
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                finally:
+                    self.oom_process = None
+            raise
 
     def _sample(self) -> None:
         total, idle = _cpu_totals()
@@ -130,18 +148,24 @@ class TelemetryRecorder:
             self._sample()
 
     def stop(self) -> DeviceTelemetry:
+        if self.stopped:
+            return validate_device_telemetry(self.output)
+        self.stopped = True
         self.stop_event.set()
-        self.thread.join(timeout=max(1.0, self.period_seconds * 2))
-        self._sample()
+        if self.thread.is_alive():
+            self.thread.join(timeout=max(1.0, self.period_seconds * 2))
         oom_events = 0
-        if self.oom_process is not None:
-            self.oom_process.terminate()
-            try:
-                stdout, _ = self.oom_process.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.oom_process.kill()
-                stdout, _ = self.oom_process.communicate(timeout=10)
-            oom_events = len([line for line in stdout.splitlines() if line.strip()])
+        try:
+            self._sample()
+        finally:
+            if self.oom_process is not None:
+                self.oom_process.terminate()
+                try:
+                    stdout, _ = self.oom_process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.oom_process.kill()
+                    stdout, _ = self.oom_process.communicate(timeout=10)
+                oom_events = len([line for line in stdout.splitlines() if line.strip()])
         memory = _meminfo()
         _, docker_available = _container_count()
         telemetry = DeviceTelemetry(

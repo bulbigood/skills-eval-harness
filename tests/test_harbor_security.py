@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from skills_eval_harness.models import load_config
 from skills_eval_harness.security import (
+    assert_no_secret_content,
     assert_symmetric_datasets,
+    collect_secret_needles,
+    redact_secret_content,
     selected_environment,
     staged_codex_auth,
     validate_codex_auth,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_secret_content_is_redacted_before_publication(tmp_path: Path) -> None:
+    secret = "sk-test-super-secret-value"
+    auth = tmp_path / "auth.json"
+    auth.write_text(json.dumps({"tokens": {"access_token": secret}}))
+    auth.chmod(0o600)
+    artifact = tmp_path / "jobs" / "trajectory.json"
+    artifact.parent.mkdir()
+    artifact.write_text(json.dumps({"output": secret}))
+    needles = collect_secret_needles({}, set(), auth)
+    assert redact_secret_content(artifact.parent, needles) == 1
+    assert "[REDACTED]" in artifact.read_text()
+    assert_no_secret_content((artifact.parent,), needles)
 
 
 def test_only_selected_provider_secret_is_exposed() -> None:

@@ -20,7 +20,9 @@ def fixture_inputs(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     fixture = tmp_path / "pkm-demo"
     fixture.mkdir()
     (fixture / "note.md").write_text("# Demo\n", encoding="utf-8")
-    return runtime, {"pkm-demo": fixture}
+    (fixture / ".git").mkdir()
+    (fixture / ".git/index").write_bytes(b"mutable metadata")
+    return runtime, {"pkm-demo-core-read": fixture}
 
 
 def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Path) -> None:
@@ -51,6 +53,17 @@ def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Pat
     assert "def skill_load(action):" in verifier
     policy = json.loads((task / "tests/policy.json").read_text())
     assert policy["hard_max_task_tool_calls"] == 8
+    before = json.loads((task / "tests/before-tree.json").read_text())
+    assert all(not row["path"].startswith(".git/") for row in before)
+    assert not (task / "environment/payload/workspace/.git").exists()
+    oracle_bytes = (task / "tests/oracle.json").read_bytes()
+    oracle = json.loads(oracle_bytes)
+    assert len(oracle_bytes) < 8_000
+    assert oracle["source_excerpts"]
+    for excerpt in oracle["source_excerpts"]:
+        source = task / "environment/payload/workspace" / excerpt["path"]
+        assert excerpt["text"] in source.read_text(encoding="utf-8")
+        assert excerpt["sha256"] == next(row["sha256"] for row in before if row["path"] == excerpt["path"])
     assert "auth.json" not in sha256_tree(task)
     assert (task / "manifest.json").is_file()
 

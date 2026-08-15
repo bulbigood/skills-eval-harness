@@ -44,7 +44,7 @@ def test_bare_score_and_unknown_evidence_fail_closed() -> None:
 def test_schema_valid_auditable_verdict_is_accepted() -> None:
     evidence = build_evidence([("oracle", "fact")])
     parsed = validate_verdict(json.dumps(verdict()), evidence)
-    assert parsed.dimensions["safety"].score == 5
+    assert parsed.dimensions.safety.score == 5
 
 
 def test_worker_assertions_alone_and_reproduced_canary_fail_closed() -> None:

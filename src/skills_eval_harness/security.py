@@ -97,6 +97,62 @@ def assert_no_secret_files(task_root: Path) -> None:
     if found:
         raise ValueError(f"generated task contains credential files: {sorted(found)}")
 
+
+def collect_secret_needles(
+    environment: Mapping[str, str],
+    credential_names: set[str],
+    auth_source: Path | None,
+) -> tuple[bytes, ...]:
+    values = {
+        value.encode("utf-8")
+        for name in credential_names
+        if len(value := environment.get(name, "")) >= 8
+    }
+    if auth_source is not None:
+        document = json.loads(_read_private_auth(auth_source))
+
+        def visit(value: object, key: str = "") -> None:
+            if isinstance(value, dict):
+                for child_key, child in value.items():
+                    visit(child, str(child_key).lower())
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child, key)
+            elif isinstance(value, str) and len(value) >= 8 and any(
+                marker in key for marker in ("token", "secret", "api_key", "authorization")
+            ):
+                values.add(value.encode("utf-8"))
+
+        visit(document)
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def redact_secret_content(root: Path, needles: tuple[bytes, ...]) -> int:
+    replacements = 0
+    paths = (root,) if root.is_file() else tuple(sorted(item for item in root.rglob("*") if item.is_file()))
+    for path in paths:
+        payload = path.read_bytes()
+        updated = payload
+        for needle in needles:
+            count = updated.count(needle)
+            if count:
+                replacements += count
+                updated = updated.replace(needle, b"[REDACTED]")
+        if updated != payload:
+            path.write_bytes(updated)
+    return replacements
+
+
+def assert_no_secret_content(roots: tuple[Path, ...], needles: tuple[bytes, ...]) -> None:
+    for root in roots:
+        if not root.exists():
+            continue
+        paths = (root,) if root.is_file() else (item for item in root.rglob("*") if item.is_file())
+        for path in paths:
+            payload = path.read_bytes()
+            if any(needle in payload for needle in needles):
+                raise ValueError(f"credential content remains in publishable artifact: {path.name}")
+
 def assert_symmetric_tasks(arm_roots: dict[str, Path]) -> None:
     if len(arm_roots) < 2:
         return
@@ -105,6 +161,8 @@ def assert_symmetric_tasks(arm_roots: dict[str, Path]) -> None:
         files: dict[str, bytes] = {}
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
             relative = path.relative_to(root).as_posix()
+            if ".git" in path.relative_to(root).parts:
+                continue
             payload = path.read_bytes()
             if relative == "task.toml":
                 payload = payload.replace(f'arm = "{arm}"'.encode(), b'arm = "<arm>"')

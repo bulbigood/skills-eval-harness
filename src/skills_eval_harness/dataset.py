@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import inspect
+import os
+import re
 import shutil
 from pathlib import Path
 
@@ -33,6 +35,7 @@ from pathlib import Path
 def tree(root):
     rows=[]
     for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
+        if ".git" in path.relative_to(root).parts: continue
         if path.is_symlink():
             target=path.resolve()
             if not target.is_relative_to(root.resolve()):
@@ -51,6 +54,7 @@ workspace=Path("/workspace")
 manifest=tree(workspace)
 before=json.loads(Path("/tests/before-tree.json").read_text(encoding="utf-8"))
 policy=json.loads(Path("/tests/policy.json").read_text(encoding="utf-8"))
+oracle=json.loads(Path("/tests/oracle.json").read_text(encoding="utf-8"))
 def collect_tools(value):
     if isinstance(value,dict):
         own=value.get("tool_calls",[]) if isinstance(value.get("tool_calls"),list) else []
@@ -81,9 +85,33 @@ failures=[]
 if policy["read_only"] and not unchanged: failures.append("read-only scenario modified workspace")
 hard_max=policy.get("hard_max_task_tool_calls")
 if hard_max is not None and tool_calls>hard_max: failures.append("hard tool-call maximum exceeded")
-payload={"workspace":manifest,"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"task_tool_output_bytes":task_tool_output_bytes,"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
-Path("/logs/verifier/workspace-manifest.json").write_text(json.dumps(payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
-Path("/logs/verifier/mechanical.json").write_text(json.dumps(payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
+before_by_path={row["path"]:row for row in before}
+after_by_path={row["path"]:row for row in manifest}
+changed=[]
+text_budget=6000
+for path in sorted(set(before_by_path)|set(after_by_path)):
+    old=before_by_path.get(path)
+    new=after_by_path.get(path)
+    if old==new: continue
+    item={"path":path,"before":old,"after":new}
+    target=workspace/path
+    if new is not None and target.is_file() and text_budget:
+        payload=target.read_bytes()
+        try:
+            text=payload.decode("utf-8")
+        except UnicodeDecodeError:
+            text=None
+        if text is not None:
+            excerpt=text[:min(4096,text_budget)]
+            item["text_excerpt"]=excerpt
+            item["text_truncated"]=len(excerpt)<len(text)
+            text_budget-=len(excerpt)
+    changed.append(item)
+workspace_payload={"workspace":manifest,"baseline_unchanged":unchanged,"changes":changed}
+mechanical_payload={"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"task_tool_output_bytes":task_tool_output_bytes,"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
+Path("/logs/verifier/oracle.json").write_text(json.dumps(oracle,sort_keys=True,separators=(",",":")),encoding="utf-8")
+Path("/logs/verifier/workspace-manifest.json").write_text(json.dumps(workspace_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
+Path("/logs/verifier/mechanical.json").write_text(json.dumps(mechanical_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/reward.json").write_text(json.dumps({"infrastructure":0.0 if failures else 1.0}),encoding="utf-8")
 '''
 VERIFIER = VERIFIER_TEMPLATE.replace("__SKILL_LOAD_FUNCTION__", _SKILL_LOAD_FUNCTION)
@@ -95,17 +123,72 @@ def _copy(source: Path, destination: Path) -> None:
     if destination.exists():
         shutil.rmtree(destination) if destination.is_dir() else destination.unlink()
     if source.is_dir():
-        shutil.copytree(source, destination, symlinks=False)
+        shutil.copytree(source, destination, symlinks=False, ignore=shutil.ignore_patterns(".git"))
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            os.link(source, destination)
+        except OSError:
+            shutil.copy2(source, destination)
 
 def _tree_manifest(root: Path) -> list[dict[str, object]]:
     return [
         {"path": path.relative_to(root).as_posix(), "sha256": sha256_file(path), "bytes": path.stat().st_size}
         for path in sorted(root.rglob("*"), key=lambda item: item.as_posix())
-        if path.is_file()
+        if path.is_file() and ".git" not in path.relative_to(root).parts
     ]
+
+
+def _semantic_oracle(workspace: Path, scenario: dict) -> dict:
+    terms = {
+        value.lower()
+        for value in re.findall(r"[A-Za-z0-9_-]{4,}", scenario["request"])
+    }
+    candidates: list[tuple[int, str, str, str]] = []
+    for path in sorted(workspace.rglob("*"), key=lambda item: item.as_posix()):
+        if not path.is_file() or ".git" in path.relative_to(workspace).parts:
+            continue
+        payload = path.read_bytes()
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        relative = path.relative_to(workspace).as_posix()
+        haystack = f"{relative}\n{text}".lower()
+        score = sum(4 if term in relative.lower() else 1 for term in terms if term in haystack)
+        candidates.append((score, relative, sha256_file(path), text))
+    excerpts = []
+    budget = 5500
+    ranked = sorted(candidates, key=lambda item: (-item[0], item[1]))
+    prioritized = []
+    for term in sorted(terms):
+        path_matches = [
+            item
+            for item in ranked
+            if term in {part.lower() for part in re.findall(r"[A-Za-z0-9]+", item[1])}
+        ]
+        if path_matches and path_matches[0] not in prioritized:
+            prioritized.append(path_matches[0])
+    ranked = prioritized + [item for item in ranked if item not in prioritized]
+    use_zero_score = not any(item[0] > 0 for item in ranked)
+    for score, relative, digest, text in ranked:
+        if len(excerpts) == 4:
+            break
+        if score == 0 and not use_zero_score:
+            continue
+        excerpt = text[:1600]
+        encoded = excerpt.encode("utf-8")
+        if len(encoded) > budget:
+            continue
+        excerpts.append({"path": relative, "sha256": digest, "text": excerpt})
+        budget -= len(encoded)
+    if not excerpts:
+        raise ValueError(f"scenario {scenario['id']} has no fixture-derived semantic oracle evidence")
+    return {
+        "procedure": scenario["procedure"],
+        "excellent": scenario["excellent"],
+        "source_excerpts": excerpts,
+    }
 
 def scenario_map(path: Path) -> dict[str, dict]:
     document = load_yaml(path)
@@ -174,7 +257,7 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
     for scenario_id in suite.scenarios:
         scenario = scenarios[scenario_id]
         fixture_name = scenario["fixture"]
-        fixture_root = fixture_roots.get(fixture_name) or fixture_roots.get("pkm-demo" if fixture_name.startswith("pkm-demo") else fixture_name)
+        fixture_root = fixture_roots.get(fixture_name)
         if fixture_root is None or not fixture_root.is_dir():
             raise ValueError(f"missing materialized fixture {fixture_name!r}")
         for sample in range(1, samples + 1):
@@ -201,10 +284,14 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
                 hard_max = max(DEFAULT_HARD_TOOL_CALL_LIMIT, efficiency["task_tool_calls"][1])
             atomic_write(task / "tests/before-tree.json", canonical_json(_tree_manifest(task / "environment/payload/workspace")))
             atomic_write(task / "tests/policy.json", canonical_json({"read_only": not write_capability, "hard_max_task_tool_calls": hard_max}))
+            atomic_write(
+                task / "tests/oracle.json",
+                canonical_json(_semantic_oracle(task / "environment/payload/workspace", scenario)),
+            )
             (task / "instruction.md").write_text(f"Work offline.\n\nRequest:\n{scenario['request']}\n", encoding="utf-8")
             text = task_toml(name=task_id, fixture=fixture_name, config=config, agent=agent)
             TaskConfig.model_validate_toml(text)
             (task / "task.toml").write_text(text, encoding="utf-8")
-            manifest = {"protocol": "iwe-harbor-v1", "scenario_id": scenario_id, "sample": sample, "fixture_sha256": sha256_tree(fixture_root), "runtime_sha256": sha256_file(runtime), "task_sha256": sha256_tree(task)}
+            manifest = {"protocol": "iwe-harbor-v1", "scenario_id": scenario_id, "sample": sample, "fixture_sha256": sha256_tree(fixture_root), "runtime_sha256": sha256_file(runtime)}
             atomic_write(task / "manifest.json", canonical_json(manifest))
     return output

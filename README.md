@@ -55,7 +55,7 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 `execution.global_concurrency` defaults to `2`. `--jobs N` overrides it for one run. The value is a global Harbor trial ceiling, not a per-arm allowance: paired arms run concurrently with an equal static share (`1 + 1` at the default). An odd spare slot remains unused rather than biasing one arm. If the limit is smaller than the arm count, arms run in deterministic one-slot batches. The resolved allocation is recorded in `run-manifest.json`.
 
-Successful runs produce schema-constrained `device-telemetry.json` containing numeric capacity and load measurements only. Publication validates and seals that file, copies every sealed report/evidence input into a sibling `.evidence` directory, and stages the report, checksum, telemetry, cells, Harbor locks/results, trajectories, verifier evidence, manifests, and seal with `git add`. Publication fails closed if telemetry contains unexpected fields such as hostnames, paths, commands, labels, network identifiers, or credential material.
+Every completed run records a terminal cell for every planned identity and produces schema-constrained `device-telemetry.json` containing numeric capacity and load measurements only. A failing suite is sealed for diagnosis and exits nonzero. `--run-purpose diagnostic` is the default and can never be published. Publication accepts only a passing `production` run with at least the suite's preregistered `default_samples`, revalidates and recomputes the sealed bundle, then stages the report, checksum, telemetry, cells, Harbor locks/results, trajectories, semantic oracle, verifier evidence, immutable inputs, manifests, and seal. Unexpected telemetry fields such as hostnames, paths, commands, labels, network identifiers, or credential material fail closed.
 
 ## Suites
 
@@ -73,4 +73,4 @@ uv run skills-eval run --help
 uv run skills-eval publish --help
 ```
 
-Start with one scenario and one sample. A full matrix performs paid worker and judge calls and should only follow a successful smoke run.
+Start with one scenario, one sample, and the default diagnostic purpose. A full production matrix performs paid worker and judge calls and should only follow a successful smoke run; explicitly pass `--run-purpose production` only for the preregistered matrix intended for publication.

@@ -8,12 +8,21 @@ import pytest
 
 from skills_eval_harness.publish import publish
 from skills_eval_harness.hashing import sha256_file
-from skills_eval_harness.provenance import Provenance, seal_run
+from skills_eval_harness.provenance import Provenance, seal_run, verify_run_seal
 from skills_eval_harness.telemetry import validate_device_telemetry
 
 
 SHA = "a" * 64
 COMMIT = "b" * 40
+
+
+@pytest.fixture(autouse=True)
+def validate_seal_and_return_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    def validate(run_dir: Path, *, require_seal: bool) -> dict:
+        if require_seal:
+            verify_run_seal(run_dir)
+        return json.loads((run_dir / "summary.json").read_text())
+    monkeypatch.setattr("skills_eval_harness.publish.validate_run_bundle", validate)
 
 
 def git(root: Path, *args: str) -> None:
@@ -27,17 +36,21 @@ def provenance(dirty: bool = False) -> Provenance:
         source_tree_sha256=SHA,
         selected_skill="demo",
         selected_skill_sha256=SHA,
+        selected_skill_harbor_sha256=SHA,
         runtime_version="1.2.3",
         runtime_sha256=SHA,
         harness_commit=COMMIT,
+        harness_tree_sha256=SHA,
         harness_dirty=dirty,
         suite_sha256=SHA,
         effective_suite_sha256=SHA,
         scenario_catalog_sha256=SHA,
         config_sha256=SHA,
+        fixture_registry_sha256=SHA,
         harbor_version="0.21.0",
         task_checksums={"task": SHA},
         image_digests={"agent": SHA},
+        fixture_sources={"fixture": {"repository": "https://github.com/acme/fixture", "commit": COMMIT, "tree": COMMIT, "payload_sha256": SHA}},
     )
 
 
@@ -49,19 +62,24 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     git(root, "remote", "add", "upstream", "https://github.com/iwe-org/skills-eval-harness.git")
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": True, "expected_cells": 1, "observed_cells": 1}))
     (run / "provenance.json").write_text(provenance().model_dump_json())
-    (run / "run-manifest.json").write_text("{}")
+    (run / "run-manifest.json").write_text(json.dumps({"run_id": "canonical-production-run", "run_purpose": "production", "samples": 10, "suite_default_samples": 10}))
     (run / "jobs/job/trial/agent").mkdir(parents=True)
     (run / "jobs/job/trial/verifier").mkdir(parents=True)
     (run / "jobs/job/lock.json").write_text("{}")
     (run / "jobs/job/result.json").write_text("{}")
     (run / "jobs/job/trial/agent/trajectory.json").write_text("{}")
+    (run / "jobs/job/trial/verifier/oracle.json").write_text("{}")
     (run / "jobs/job/trial/verifier/mechanical.json").write_text("{}")
     (run / "jobs/job/trial/verifier/workspace-manifest.json").write_text("{}")
     (run / "jobs/job/trial/verifier/test-stdout.txt").write_text("ok")
     (run / "jobs/job/trial/verifier/test-stderr.txt").write_text("")
     (run / "inputs").mkdir()
-    for name in ("config.yaml", "scenario-catalog.yaml", "suite.yaml", "effective-suite.json"):
+    for name in ("config.yaml", "scenario-catalog.yaml", "suite.yaml", "effective-suite.json", "fixture-sources.json"):
         (run / "inputs" / name).write_text("{}")
+    for name in ("runtime", "source-commit-object", "harness-commit-object"):
+        (run / "inputs" / name).write_bytes(b"fixture")
+    (run / "inputs/fixture-commit-objects").mkdir()
+    (run / "inputs/fixture-commit-objects/fixture").write_bytes(b"fixture commit")
     (run / "datasets/arm/task/tests").mkdir(parents=True)
     (run / "datasets/arm/task/task.toml").write_text("version = '1.0'")
     (run / "datasets/arm/task/instruction.md").write_text("task")
@@ -84,11 +102,23 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     return root, run
 
 
+def test_seal_rejects_omitted_required_file(tmp_path: Path) -> None:
+    _, run = setup(tmp_path)
+    seal = json.loads((run / "run-seal.json").read_text())
+    del seal["files"]["inputs/runtime"]
+    (run / "run-seal.json").write_text(json.dumps(seal))
+    with pytest.raises(ValueError, match="incomplete|exact publication payload"):
+        verify_run_seal(run)
+
+
 def test_publisher_derives_pass_and_canonical_repository(tmp_path: Path) -> None:
     root, run = setup(tmp_path)
+    renamed = root / "arbitrary-relocated-bundle-name"
+    run.rename(renamed)
     output = root / "published.md"
-    publish(root=root, run_dir=run, output=output)
+    publish(root=root, run_dir=renamed, output=output)
     text = output.read_text()
+    assert text.startswith("# canonical-production-run\n")
     assert "Overall suite verdict: **PASS**" in text
     assert "https://github.com/iwe-org/skills-eval-harness" in text
     assert "bulbigood" not in text
@@ -98,7 +128,7 @@ def test_publisher_derives_pass_and_canonical_repository(tmp_path: Path) -> None
     assert (evidence / "cells/arm--scenario--1.json").is_file()
     assert (evidence / "jobs/job/lock.json").is_file()
     assert (evidence / "device-telemetry.json").is_file()
-    seal = json.loads((run / "run-seal.json").read_text())
+    seal = json.loads((renamed / "run-seal.json").read_text())
     assert all(
         (evidence / relative).is_file() and sha256_file(evidence / relative) == digest
         for relative, digest in seal["files"].items()

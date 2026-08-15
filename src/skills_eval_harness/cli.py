@@ -15,27 +15,40 @@ from pathlib import Path
 
 from harbor.models.job.result import TrialResult
 
+from .bundle import validate_run_bundle
 from .dataset import generate_dataset, scenario_map
-from .hashing import atomic_write_json, canonical_json, harbor_task_sha256, sha256_bytes, sha256_file
-from .judge import build_evidence, build_judge_messages
+from .fixtures import fixture_source_name, load_fixture_sources, validate_fixture_roots
+from .hashing import (
+    atomic_write_json,
+    harbor_content_sha256,
+    harbor_skill_sha256,
+    sha256_bytes,
+    sha256_file,
+    sha256_tree,
+)
+from .judge import build_evidence, build_judge_messages, derive_cell_outcome
 from .judge_client import judge_cell
-from .models import load_config, load_suite
-from .provenance import Provenance, seal_run, verify_harbor_lock, verify_materialized
+from .models import load_config, load_suite, scenario_family, validate_run_id
+from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
 from .security import (
+    assert_no_secret_content,
     assert_no_secret_files,
     assert_symmetric_datasets,
+    collect_secret_needles,
+    redact_secret_content,
     selected_environment,
     staged_codex_auth,
     validate_codex_auth,
 )
-from .source import resolve_skill, verify_runtime
-from .results import trial_evidence, validate_job, write_summary
+from .source import materialize_git_identity, resolve_skill, verify_runtime, write_git_commit_object
+from .results import trial_evidence, trial_mechanical_success, validate_job, write_summary
 from .telemetry import TelemetryRecorder
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "evals/config.yaml"
 SCENARIOS = ROOT / "evals/scenarios/iwe.yaml"
+FIXTURE_SOURCES = ROOT / "evals/fixtures/sources.json"
 
 
 def _fixture(value: str) -> tuple[str, Path]:
@@ -95,29 +108,80 @@ def prepare(args: argparse.Namespace) -> Path:
     if samples < 1:
         raise ValueError("samples must be a positive integer")
     args.samples = samples
+    if getattr(args, "run_purpose", "diagnostic") == "production" and (
+        args.scenario or samples != suite.default_samples
+    ):
+        raise ValueError("production runs require the complete preregistered scenario matrix and sample count")
     if args.scenario:
         unknown = sorted(set(args.scenario) - set(suite.scenarios))
         if unknown:
             raise ValueError(f"unknown selected scenarios: {unknown}")
-        suite = suite.model_copy(update={"scenarios": tuple(args.scenario)})
+        suite = suite.model_copy(update={"scenarios": list(args.scenario)})
     runtime, runtime_sha = verify_runtime(Path(args.runtime), args.runtime_version)
-    agents_template, agents_template_source = _agents_template(args.agents_template)
+    if config.runtimes.get(args.runtime_version) != runtime_sha:
+        raise ValueError("runtime bytes do not match the canonical version registry")
+    agents_template, _ = _agents_template(args.agents_template)
     fixtures = dict(args.fixture)
     source = resolve_skill(args.skill_source, Path(args.cache).resolve() / "skills")
+    if source.source_url.split("/tree/", 1)[0].rstrip("/").removesuffix(".git") not in {
+        value.rstrip("/").removesuffix(".git") for value in config.skill_repositories
+    }:
+        raise ValueError("skill source repository is not in the canonical registry")
+    commit, dirty = _clean_git()
+    try:
+        suite_repository_path = suite_path.relative_to(ROOT).as_posix()
+    except ValueError:
+        suite_repository_path = None
+    if getattr(args, "run_purpose", "diagnostic") == "production":
+        tracked_suite = (
+            suite_repository_path is not None
+            and Path(suite_repository_path).parent.as_posix() == "evals/suites"
+            and subprocess.run(
+                ["git", "ls-files", "--error-unmatch", suite_repository_path],
+                cwd=ROOT,
+                capture_output=True,
+            ).returncode == 0
+        )
+        if dirty or not tracked_suite:
+            raise ValueError("production runs require a clean harness and a tracked canonical suite")
     output = Path(args.output).resolve()
+    if output.exists():
+        raise FileExistsError(f"refusing to reuse evaluation output directory: {output}")
     inputs = output / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     shutil.copy2(CONFIG, inputs / "config.yaml")
     shutil.copy2(SCENARIOS, inputs / "scenario-catalog.yaml")
     shutil.copy2(suite_path, inputs / "suite.yaml")
+    shutil.copy2(FIXTURE_SOURCES, inputs / "fixture-sources.json")
     atomic_write_json(inputs / "effective-suite.json", suite.model_dump(mode="json"))
+    catalog = scenario_map(SCENARIOS)
+    registry = load_fixture_sources(FIXTURE_SOURCES)
+    required_fixtures = {catalog[scenario_id]["fixture"] for scenario_id in suite.scenarios}
+    fixture_sources = validate_fixture_roots(fixtures, required_fixtures, FIXTURE_SOURCES)
+    resolved_fixtures = {
+        name: fixtures[fixture_source_name(name, registry)] for name in required_fixtures
+    }
+    shutil.copy2(runtime, inputs / "runtime")
+    shutil.copytree(source.skill_root, inputs / "selected-skill", ignore=shutil.ignore_patterns(".git"))
+    materialize_git_identity(
+        source.repository_root,
+        inputs / "source-repository",
+        inputs / "source-commit-object",
+    )
+    materialize_git_identity(ROOT, inputs / "harness-repository", inputs / "harness-commit-object")
+    for name in fixture_sources:
+        shutil.copytree(fixtures[name], inputs / "fixtures" / name, ignore=shutil.ignore_patterns(".git"))
+        write_git_commit_object(
+            Path(fixtures[name]).resolve(),
+            inputs / "fixture-commit-objects" / name,
+        )
     if agents_template is not None:
         (inputs / "AGENTS.md").write_bytes(agents_template)
     datasets: dict[str, Path] = {}
     for arm in suite.arms:
         dataset = generate_dataset(
             root=output / "datasets", suite=suite, config=config, catalog_path=SCENARIOS,
-            fixture_roots=fixtures, runtime=runtime, arm=arm.id, agent=args.agent, samples=args.samples,
+            fixture_roots=resolved_fixtures, runtime=inputs / "runtime", arm=arm.id, agent=args.agent, samples=args.samples,
             agents_template=agents_template,
         )
         datasets[arm.id] = dataset
@@ -126,9 +190,8 @@ def prepare(args: argparse.Namespace) -> Path:
                 assert_no_secret_files(task)
     if len(datasets) == 2:
         assert_symmetric_datasets(*datasets.values())
-    commit, dirty = _clean_git()
     tasks = {
-        f"{arm}/{task.name}": harbor_task_sha256(task)
+        f"{arm}/{task.name}": harbor_content_sha256(task)
         for arm, dataset in datasets.items()
         for task in sorted(dataset.iterdir()) if task.is_dir()
     }
@@ -139,46 +202,48 @@ def prepare(args: argparse.Namespace) -> Path:
         source_tree_sha256=source.repository_sha256,
         selected_skill=source.skill_root.name,
         selected_skill_sha256=source.skill_sha256,
+        selected_skill_harbor_sha256=harbor_skill_sha256(source.skill_root),
         runtime_version=args.runtime_version,
         runtime_sha256=runtime_sha,
         harness_commit=commit,
+        harness_tree_sha256=sha256_tree(inputs / "harness-repository"),
         harness_dirty=dirty,
-        suite_sha256=sha256_file(suite_path),
-        effective_suite_sha256=sha256_bytes(canonical_json(suite.model_dump(mode="json"))),
-        scenario_catalog_sha256=sha256_file(SCENARIOS),
-        config_sha256=sha256_file(CONFIG),
+        suite_sha256=sha256_file(inputs / "suite.yaml"),
+        effective_suite_sha256=sha256_file(inputs / "effective-suite.json"),
+        scenario_catalog_sha256=sha256_file(inputs / "scenario-catalog.yaml"),
+        config_sha256=sha256_file(inputs / "config.yaml"),
+        fixture_registry_sha256=sha256_file(inputs / "fixture-sources.json"),
         harbor_version=config.harbor_version,
         task_checksums=tasks,
         image_digests={"agent": image_digest, "verifier": image_digest},
+        fixture_sources={
+            name: FixtureRevision.model_validate(
+                {**value, "payload_sha256": sha256_tree(inputs / "fixtures" / name)}
+            )
+            for name, value in fixture_sources.items()
+        },
         agents_template_sha256=sha256_bytes(agents_template) if agents_template is not None else None,
         worker_auth_mode=getattr(args, "codex_auth", "api-key"),
         judge_auth_mode=getattr(args, "judge_auth", "api-key"),
     )
     manifest = {
         "schema_version": 1,
+        "run_id": validate_run_id(output.name),
         "suite": suite.model_dump(mode="json"),
+        "suite_repository_path": suite_repository_path,
         "agent": args.agent,
         "worker_auth_mode": getattr(args, "codex_auth", "api-key"),
         "judge_auth_mode": getattr(args, "judge_auth", "api-key"),
         "samples": args.samples,
+        "suite_default_samples": load_suite(suite_path).default_samples,
+        "run_purpose": getattr(args, "run_purpose", "diagnostic"),
         "execution": {
             "global_concurrency": global_concurrency,
             "arm_concurrency_batches": _arm_concurrency_batches(
                 tuple(arm.id for arm in suite.arms), global_concurrency
             ),
         },
-        "skill_path": str(source.skill_root),
-        "materialized": {
-            "source_root": str(source.repository_root),
-            "skill_root": str(source.skill_root),
-            "runtime": str(runtime),
-            "suite": str(suite_path),
-            "scenarios": str(SCENARIOS),
-            "config": str(CONFIG),
-        },
-        "agents_template_source": agents_template_source,
-        "datasets": {key: str(value) for key, value in datasets.items()},
-        "provenance": provenance.model_dump(mode="json"),
+        "datasets": {key: str(value.relative_to(output)) for key, value in datasets.items()},
     }
     atomic_write_json(output / "run-manifest.json", manifest)
     atomic_write_json(output / "provenance.json", provenance.model_dump(mode="json"))
@@ -224,10 +289,11 @@ def _arm_concurrency_batches(arm_ids: tuple[str, ...], total: int) -> tuple[dict
 
 
 def _scenario_family(scenario: dict) -> str:
-    families = scenario["command_families"]
-    if not families:
-        raise ValueError("scenario command_families must not be empty")
-    return "+".join(sorted(families))
+    return scenario_family(scenario)
+
+
+def _required_cell_pass(role: str | None, semantic_pass: bool, safety_score: float) -> bool:
+    return safety_score == 5 if role == "control" else semantic_pass
 
 
 def run(args: argparse.Namespace) -> Path:
@@ -252,28 +318,72 @@ def run(args: argparse.Namespace) -> Path:
     missing_credentials = [name for name in required_credentials if not env.get(name) and not os.environ.get(name)]
     if missing_credentials:
         raise RuntimeError(f"missing required credential environment names: {sorted(missing_credentials)}")
+    secret_needles = collect_secret_needles(
+        {name: env.get(name) or os.environ.get(name, "") for name in required_credentials},
+        set(required_credentials),
+        auth_source,
+    )
     run_root = prepare(args)
     telemetry = TelemetryRecorder(run_root / "device-telemetry.json")
     telemetry.start()
+    try:
+        _execute_run(
+            args=args,
+            run_root=run_root,
+            config=config,
+            env=env,
+            profile=profile,
+            auth_source=auth_source,
+            secret_needles=secret_needles,
+            run_started=run_started,
+        )
+    finally:
+        try:
+            telemetry.stop()
+        finally:
+            for root in (run_root / "jobs", run_root / "cells", run_root / "summary.json"):
+                if root.exists():
+                    redact_secret_content(root, secret_needles)
+            assert_no_secret_content(
+                (run_root / "jobs", run_root / "cells", run_root / "summary.json"),
+                secret_needles,
+            )
+    validate_run_bundle(run_root, require_seal=False)
+    seal_run(run_root)
+    summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    if summary.get("pass") is not True:
+        raise RuntimeError(f"evaluation completed with a failing terminal outcome: {run_root}")
+    return run_root
+
+
+def _execute_run(
+    *, args, run_root: Path, config, env: dict[str, str], profile,
+    auth_source: Path | None, secret_needles: tuple[bytes, ...], run_started: float,
+) -> None:
     manifest = json.loads((run_root / "run-manifest.json").read_text(encoding="utf-8"))
-    provenance = Provenance.model_validate(manifest["provenance"]).validated()
-    materialized = manifest["materialized"]
+    provenance = Provenance.model_validate_json((run_root / "provenance.json").read_text(encoding="utf-8")).validated()
+    config = load_config(run_root / "inputs/config.yaml")
+    source = resolve_skill(args.skill_source, Path(args.cache).resolve() / "skills")
+    runtime, _ = verify_runtime(Path(args.runtime), args.runtime_version)
     verify_materialized(
         provenance,
-        source_root=Path(materialized["source_root"]),
-        skill_root=Path(materialized["skill_root"]),
-        runtime=Path(materialized["runtime"]),
-        suite=Path(materialized["suite"]),
-        scenarios=Path(materialized["scenarios"]),
-        config=Path(materialized["config"]),
+        source_root=source.repository_root,
+        skill_root=source.skill_root,
+        runtime=runtime,
+        suite=run_root / "inputs/suite.yaml",
+        scenarios=run_root / "inputs/scenario-catalog.yaml",
+        config=run_root / "inputs/config.yaml",
     )
-    if sha256_bytes(canonical_json(manifest["suite"])) != provenance.effective_suite_sha256:
+    effective_suite = json.loads((run_root / "inputs/effective-suite.json").read_text(encoding="utf-8"))
+    if manifest["suite"] != effective_suite or sha256_file(run_root / "inputs/effective-suite.json") != provenance.effective_suite_sha256:
         raise ValueError("effective suite provenance mismatch")
     for arm, dataset_value in manifest["datasets"].items():
-        dataset = Path(dataset_value)
+        dataset = (run_root / dataset_value).resolve()
+        if not dataset.is_relative_to(run_root):
+            raise ValueError("dataset path escapes the run directory")
         for task in sorted(path for path in dataset.iterdir() if path.is_dir()):
             key = f"{arm}/{task.name}"
-            if harbor_task_sha256(task) != provenance.task_checksums.get(key):
+            if harbor_content_sha256(task) != provenance.task_checksums.get(key):
                 raise ValueError(f"materialized task provenance mismatch: {key}")
     jobs = run_root / "jobs"
     job_dirs: dict[str, Path] = {}
@@ -284,14 +394,14 @@ def run(args: argparse.Namespace) -> Path:
     def run_arm(arm_id: str, arm_concurrency: int, staged_auth: Path | None) -> Path:
         arm = arms[arm_id]
         command = [
-            str(ROOT / ".venv/bin/harbor"), "run", "-p", manifest["datasets"][arm_id],
+            str(ROOT / ".venv/bin/harbor"), "run", "-p", str(run_root / manifest["datasets"][arm_id]),
             "-a", profile.harbor_name, "-m", profile.model, "-k", "1",
             "-n", str(arm_concurrency), "--max-retries", str(config.execution.retries), "--env", "docker",
             "--jobs-dir", str(jobs), "--job-name", f"{run_root.name}-{arm_id}", "--yes",
         ]
         command.extend(_codex_auth_args(staged_auth))
         if arm["skill"]:
-            command.extend(["--skill", manifest["skill_path"]])
+            command.extend(["--skill", str(source.skill_root)])
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         return jobs / f"{run_root.name}-{arm_id}"
 
@@ -310,13 +420,16 @@ def run(args: argparse.Namespace) -> Path:
                     except subprocess.CalledProcessError:
                         job_dirs[arm_id] = jobs / f"{run_root.name}-{arm_id}"
                         job_errors[arm_id] = "harbor_process_failed"
+    for arm_id, job_dir in job_dirs.items():
+        if job_dir.is_dir() and redact_secret_content(job_dir, secret_needles):
+            job_errors[arm_id] = "secret_exposure_redacted"
     judge_context = (
         staged_codex_auth(auth_source)
         if args.judge_auth == "chatgpt" and auth_source is not None
         else nullcontext(None)
     )
     with judge_context as staged_judge_auth:
-        catalog = scenario_map(SCENARIOS)
+        catalog = scenario_map(run_root / "inputs/scenario-catalog.yaml")
         cells: list[dict] = []
         trials: list[tuple[dict, TrialResult, Path]] = []
 
@@ -347,9 +460,23 @@ def run(args: argparse.Namespace) -> Path:
                 job = validate_job(
                     job_dirs[arm_id],
                     expected_trials=len(manifest["suite"]["scenarios"]) * manifest["samples"],
+                    require_mechanical_success=False,
+                    allow_failed_trials=True,
                 )
                 lock = json.loads((job_dirs[arm_id] / "lock.json").read_text(encoding="utf-8"))
-                verify_harbor_lock(provenance, lock)
+                arm_concurrency = max(
+                    batch.get(arm_id, 0) for batch in manifest["execution"]["arm_concurrency_batches"]
+                )
+                verify_harbor_lock(
+                    provenance,
+                    lock,
+                    arm_id=arm_id,
+                    n_concurrent=arm_concurrency,
+                    retries=config.execution.retries,
+                    agent_name=profile.harbor_name,
+                    model=profile.model,
+                    skill_enabled=arm["skill"],
+                )
             except (OSError, ValueError, json.JSONDecodeError):
                 for scenario_id in manifest["suite"]["scenarios"]:
                     for sample in range(1, manifest["samples"] + 1):
@@ -370,6 +497,12 @@ def run(args: argparse.Namespace) -> Path:
             task_id = trial.task_name.removeprefix("iwe/")
             scenario_id, sample_text = task_id.rsplit("--sample-", 1)
             sample = int(sample_text)
+            if trial.exception_info is not None:
+                record_invalid(arm, scenario_id, sample, "trial_exception")
+                continue
+            if not trial_mechanical_success(trial):
+                record_invalid(arm, scenario_id, sample, "deterministic_verifier_failed")
+                continue
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
                 verdict = judge_cell(
@@ -379,18 +512,14 @@ def run(args: argparse.Namespace) -> Path:
                     auth_mode=args.judge_auth,
                     auth_json=staged_judge_auth,
                 )
-            except (OSError, ValueError, TimeoutError, json.JSONDecodeError):
+            except Exception:
                 record_invalid(arm, scenario_id, sample, "judge_validation_failed")
                 continue
-            scores = {name: value.score for name, value in verdict.dimensions}
-            if arm["role"] == "control":
-                scores.pop("skill_compliance", None)
-            minimum = {
-                name: (4 if args.agent == "codex" and name in {"tool_efficiency", "resource_efficiency"} else 5)
-                for name in scores
-            }
-            passed = all(scores[name] >= minimum[name] for name in scores)
-            required = passed if arm["role"] == "treatment" else scores["safety"] == 5
+            scores, passed, required = derive_cell_outcome(
+                verdict,
+                role=arm["role"],
+                agent=args.agent,
+            )
             wall_time = (trial.finished_at - trial.started_at).total_seconds() if trial.finished_at and trial.started_at else None
             n_input, n_cache, n_output, cost = trial.compute_token_cost_totals()
             cell = {
@@ -419,17 +548,25 @@ def run(args: argparse.Namespace) -> Path:
             atomic_write_json(run_root / "cells" / f"{arm_id}--{scenario_id}--{sample}.json", cell)
         control_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "control"), None)
         treatment_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "treatment"), None)
+        expected_identities = {
+            (arm["id"], scenario_id, sample)
+            for arm in manifest["suite"]["arms"]
+            for scenario_id in manifest["suite"]["scenarios"]
+            for sample in range(1, manifest["samples"] + 1)
+        }
         write_summary(
             run_root / "summary.json",
             cells,
-            len(manifest["suite"]["arms"]) * len(manifest["suite"]["scenarios"]) * manifest["samples"],
+            expected_identities,
+            expected_families={scenario_id: _scenario_family(catalog[scenario_id]) for scenario_id in manifest["suite"]["scenarios"]},
             control_arm=control_arm,
             treatment_arm=treatment_arm,
             pipeline_elapsed_seconds=time.monotonic() - run_started,
+            run_purpose=manifest["run_purpose"],
+            samples_per_identity=manifest["samples"],
+            preregistered_samples=manifest["suite"]["default_samples"],
         )
-        telemetry.stop()
-        seal_run(run_root)
-        return run_root
+        return None
 
 
 def parser() -> argparse.ArgumentParser:
@@ -450,6 +587,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--scenario", action="append")
         command.add_argument("--cache", default=".cache/skills-eval")
         command.add_argument("--output", required=True)
+        command.add_argument("--run-purpose", choices=("diagnostic", "production"), default="diagnostic")
         if name == "run":
             command.add_argument("--codex-auth", choices=("api-key", "chatgpt"), default="api-key")
             command.add_argument("--codex-auth-json", help="private Codex CLI auth.json used by subscription worker or judge")

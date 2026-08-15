@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
+from .bundle import validate_run_bundle
 from .hashing import atomic_write, canonical_json, sha256_bytes
-from .provenance import Provenance, verify_run_seal
+from .models import validate_run_id
+from .provenance import Provenance
 from .telemetry import validate_device_telemetry
 
 
@@ -51,26 +55,59 @@ def _stage(root: Path, paths: tuple[Path, ...]) -> None:
         if not resolved.is_relative_to(resolved_root):
             raise ValueError("publication outputs must be inside the Git repository")
         relative.append(str(resolved.relative_to(resolved_root)))
-    subprocess.run(["git", "add", "--", *relative], cwd=root, check=True, capture_output=True)
-
-
-def _validate_evidence_cells(run_dir: Path, expected: int) -> None:
-    paths = sorted((run_dir / "cells").glob("*.json"))
-    if len(paths) != expected:
-        raise ValueError("sealed evidence cell count does not match summary")
-    for path in paths:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        evidence = document.get("evidence") if isinstance(document, dict) else None
-        messages = document.get("judge_messages") if isinstance(document, dict) else None
-        verdict = document.get("verdict") if isinstance(document, dict) else None
-        if not isinstance(evidence, list) or not evidence or not isinstance(messages, list) or len(messages) != 2 or not isinstance(verdict, dict):
-            raise ValueError("sealed evidence cell omits judge inputs or output")
+    raw_index = subprocess.run(
+        ["git", "rev-parse", "--git-path", "index"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    index = (root / raw_index).resolve() if not Path(raw_index).is_absolute() else Path(raw_index)
+    initial = index.read_bytes() if index.exists() else None
+    temporary_index = index.with_name(f".{index.name}.publication-{os.getpid()}")
+    index_lock = index.with_name(f"{index.name}.lock")
+    environment = {**os.environ, "GIT_INDEX_FILE": str(temporary_index)}
+    try:
+        if initial is None:
+            head_exists = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD"],
+                cwd=root,
+                capture_output=True,
+            ).returncode == 0
+            subprocess.run(
+                ["git", "read-tree", "HEAD"] if head_exists else ["git", "read-tree", "--empty"],
+                cwd=root,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+        else:
+            temporary_index.write_bytes(initial)
+        subprocess.run(
+            ["git", "add", "--", *relative],
+            cwd=root,
+            env=environment,
+            check=True,
+            capture_output=True,
+        )
+        lock_fd = os.open(index_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            current = index.read_bytes() if index.exists() else None
+            if current != initial:
+                raise RuntimeError("Git index changed concurrently during publication")
+            os.replace(temporary_index, index)
+        finally:
+            os.close(lock_fd)
+            index_lock.unlink(missing_ok=True)
+    finally:
+        temporary_index.unlink(missing_ok=True)
 
 
 def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
-    verify_run_seal(run_dir)
+    summary = validate_run_bundle(run_dir, require_seal=True)
     telemetry = validate_device_telemetry(run_dir / "device-telemetry.json")
-    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
+    run_id = validate_run_id(manifest.get("run_id"))
     provenance = Provenance.model_validate_json(
         (run_dir / "provenance.json").read_text(encoding="utf-8")
     ).validated()
@@ -80,7 +117,11 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
         raise ValueError("publication requires a complete valid passing run")
     if summary.get("observed_cells") != summary.get("expected_cells"):
         raise ValueError("publication rejects incomplete runs")
-    _validate_evidence_cells(run_dir, int(summary["expected_cells"]))
+    if (
+        manifest.get("run_purpose") != "production"
+        or manifest.get("samples") != manifest.get("suite_default_samples")
+    ):
+        raise ValueError("publication requires a production run at the exact preregistered sample count")
 
     output = output.resolve()
     root = root.resolve()
@@ -110,7 +151,7 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
     }
     telemetry_json = canonical_json(telemetry_summary).decode()
     evidence_link = evidence_dir.name
-    report = f"""# {run_dir.name}
+    report = f"""# {run_id}
 
 - Overall suite verdict: **PASS**
 - Harness repository: [{repository}]({repository})
@@ -139,14 +180,40 @@ def publish(*, root: Path, run_dir: Path, output: Path) -> Path:
 The report is derived from the bundled, sealed machine-readable evidence. Device telemetry is schema-constrained to numeric capacity and load measurements; hostnames, usernames, paths, environment variables, command lines, network identifiers, container names, labels, and credential material are not accepted.
 """
 
-    evidence_dir.mkdir(parents=True)
-    for relative in _sealed_paths(run_dir):
-        destination = evidence_dir / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(run_dir / relative, destination)
-    shutil.copy2(run_dir / "run-seal.json", evidence_dir / "run-seal.json")
-    atomic_write(output, report.encode())
-    digest = sha256_bytes(report.encode())
-    atomic_write(checksum, f"{digest}  {output.name}\n".encode())
-    _stage(root, (output, checksum, evidence_dir))
+    lock_path = output.with_name(f".{output.name}.publish.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    temporary_root = Path(tempfile.mkdtemp(prefix=".publication-", dir=output.parent))
+    temporary_evidence = temporary_root / evidence_dir.name
+    temporary_output = temporary_root / output.name
+    temporary_checksum = temporary_root / checksum.name
+    created: list[Path] = []
+    try:
+        temporary_evidence.mkdir(parents=True)
+        for relative in _sealed_paths(run_dir):
+            destination = temporary_evidence / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(run_dir / relative, destination)
+        shutil.copy2(run_dir / "run-seal.json", temporary_evidence / "run-seal.json")
+        validate_run_bundle(temporary_evidence, require_seal=True)
+        atomic_write(temporary_output, report.encode())
+        digest = sha256_bytes(report.encode())
+        atomic_write(temporary_checksum, f"{digest}  {output.name}\n".encode())
+        temporary_evidence.rename(evidence_dir)
+        created.append(evidence_dir)
+        os.link(temporary_checksum, checksum)
+        created.append(checksum)
+        os.link(temporary_output, output)
+        created.append(output)
+        _stage(root, (output, checksum, evidence_dir))
+    except Exception:
+        for path in reversed(created):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        raise
+    finally:
+        os.close(lock_fd)
+        lock_path.unlink(missing_ok=True)
+        shutil.rmtree(temporary_root, ignore_errors=True)
     return output
