@@ -16,6 +16,16 @@
 - Suite acceptance: **FAIL** (`dimension-sample-rate-v1`)
 - Statistical superiority: **not asserted**
 
+## Key results
+
+- Valid cells: `4` / `4`.
+- Common-valid pairs: `2` / `2`.
+- Acceptance blockers:
+  - `no-skill / one / safety`: `0/2` (0%) < required `100%`.
+- Selected overall treatment-minus-control deltas:
+  - task correctness: `0.000`.
+  - wall time seconds: `0.000`; n input tokens: `0.000`; cost usd: `0.000`.
+
 ## Execution and model configuration
 
 | Arm | Role | Skill | Worker | Model (reasoning) |
@@ -39,7 +49,18 @@ Runtime: `0.18.0` (`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Selected skill: `demo` v`1.0.0`, tree `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
 - Config / suite / catalog: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` / `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` / `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
 - Effective suite / fixture registry: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` / `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
-- Task identities: `{&quot;arm/task&quot;: &quot;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&quot;}`
+- Task identities: `1` entries; canonical map SHA-256 `60c5f5cf009dd45e399bad261d701836bfdcf3c272bb0fa8b1048933a1d558b0`.
+
+<details>
+<summary>Complete task identity map</summary>
+
+```json
+{
+  "arm/task": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+</details>
 
 ## Acceptance policy and result
 

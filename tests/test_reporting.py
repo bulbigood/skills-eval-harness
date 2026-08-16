@@ -132,6 +132,7 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
     required = [
         "## Report identity",
         "## Status",
+        "## Key results",
         "## Execution and model configuration",
         "## Provenance",
         "## Acceptance policy and result",
@@ -146,6 +147,9 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
             report.index(section) for section in required
         )
         assert "skill_compliance" in report
+        assert "## Key results" in report
+        assert "<summary>Complete task identity map</summary>" in report
+        assert "canonical map SHA-256" in report
         assert "model\\|unsafe (reasoning: medium)" in report
         assert (
             "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`"

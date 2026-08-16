@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import re
 from urllib.parse import quote
@@ -79,6 +80,53 @@ def _status(context: ReportContext) -> str:
     return "\n".join(lines)
 
 
+def _key_results(context: ReportContext) -> str:
+    summary = context.summary
+    reliability = summary.reliability
+    valid_cells = sum(reliability.valid_cells_by_arm.values())
+    lines = ["## Key results", "", f"- Valid cells: `{valid_cells}` / `{summary.expected_cells}`."]
+    if context.identity.suite_kind == "paired":
+        lines.append(
+            f"- Common-valid pairs: `{reliability.common_valid_pairs}` / "
+            f"`{reliability.planned_pairs}`."
+        )
+    blockers = [item for item in summary.acceptance.criteria if not item.pass_]
+    if blockers:
+        lines.append("- Acceptance blockers:")
+        lines.extend(
+            f"  - `{_escape(item.arm)} / {_escape(item.scenario_id)} / "
+            f"{_escape(item.dimension)}`: `{item.passed_samples}/{item.total_samples}` "
+            f"({item.observed_pass_rate:.0%}) < required `{item.required_pass_rate:.0%}`."
+            for item in blockers
+        )
+    else:
+        lines.append("- Acceptance blockers: none.")
+    if context.identity.suite_kind == "paired":
+        paired = summary.statistics.common_valid_paired["overall"]
+        scores = paired["score_delta_treatment_minus_control"]
+        metrics = paired["metric_delta_treatment_minus_control"]
+        lines.append("- Selected overall treatment-minus-control deltas:")
+        selected_scores = (
+            "task_correctness", "scenario_compliance", "tool_efficiency", "resource_efficiency"
+        )
+        score_parts = [
+            f"{name.replace('_', ' ')}: `{_fmt(scores[name]['mean'])}`"
+            for name in selected_scores
+            if name in scores
+        ]
+        if score_parts:
+            lines.append("  - " + "; ".join(score_parts) + ".")
+        selected_metrics = ("wall_time_seconds", "n_input_tokens", "cost_usd")
+        metric_parts = [
+            f"{name.replace('_', ' ')}: `{_fmt(metrics[name]['mean'])}`"
+            for name in selected_metrics
+            if name in metrics
+        ]
+        if metric_parts:
+            lines.append("  - " + "; ".join(metric_parts) + ".")
+    return "\n".join(lines)
+
+
 def _configuration(context: ReportContext) -> str:
     lines = ["## Execution and model configuration", "", "| Arm | Role | Skill | Worker | Model (reasoning) |", "|---|---|---|---|---|"]
     for arm in sorted(context.identity.arms, key=lambda item: item["id"]):
@@ -89,7 +137,25 @@ def _configuration(context: ReportContext) -> str:
 
 
 def _provenance(context: ReportContext) -> str:
-    return "\n".join(("## Provenance", "", f"- Harness: [{_escape(context.provenance.harness_repository)}]({_link(context.provenance.harness_repository)}) commit `{context.provenance.harness_commit}`, tree `{context.provenance.harness_tree_sha256}`", f"- Source: [{_escape(context.provenance.skill_url)}]({_link(context.provenance.skill_url)}) commit `{context.provenance.source_commit}`, tree `{context.provenance.source_tree_sha256}`", f"- Selected skill: `{_escape(context.provenance.skill_name)}` v`{_escape(context.provenance.skill_version)}`, tree `{context.provenance.skill_sha256}`", f"- Config / suite / catalog: `{context.provenance.config_sha256}` / `{context.provenance.suite_sha256}` / `{context.provenance.catalog_sha256}`", f"- Effective suite / fixture registry: `{context.provenance.effective_suite_sha256}` / `{context.provenance.fixture_registry_sha256}`", f"- Task identities: `{_escape(json.dumps(context.provenance.task_checksums, sort_keys=True))}`"))
+    task_json = json.dumps(context.provenance.task_checksums, sort_keys=True, indent=2)
+    task_digest = hashlib.sha256(
+        json.dumps(
+            context.provenance.task_checksums,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return "\n".join((
+        "## Provenance", "",
+        f"- Harness: [{_escape(context.provenance.harness_repository)}]({_link(context.provenance.harness_repository)}) commit `{context.provenance.harness_commit}`, tree `{context.provenance.harness_tree_sha256}`",
+        f"- Source: [{_escape(context.provenance.skill_url)}]({_link(context.provenance.skill_url)}) commit `{context.provenance.source_commit}`, tree `{context.provenance.source_tree_sha256}`",
+        f"- Selected skill: `{_escape(context.provenance.skill_name)}` v`{_escape(context.provenance.skill_version)}`, tree `{context.provenance.skill_sha256}`",
+        f"- Config / suite / catalog: `{context.provenance.config_sha256}` / `{context.provenance.suite_sha256}` / `{context.provenance.catalog_sha256}`",
+        f"- Effective suite / fixture registry: `{context.provenance.effective_suite_sha256}` / `{context.provenance.fixture_registry_sha256}`",
+        f"- Task identities: `{len(context.provenance.task_checksums)}` entries; canonical map SHA-256 `{task_digest}`.",
+        "", "<details>", "<summary>Complete task identity map</summary>", "",
+        "```json", task_json, "```", "", "</details>",
+    ))
 
 
 def _acceptance(summary: SummaryV5) -> str:
@@ -183,5 +249,5 @@ def _telemetry(context: ReportContext) -> str:
 
 def render_report(context: ReportContext) -> str:
     """Render the complete report through one common section pipeline."""
-    sections = (_identity(context), _status(context), _configuration(context), _provenance(context), _acceptance(context.summary), _descriptive(context), _failures(context), _timing(context.summary), _audit(context), _telemetry(context))
+    sections = (_identity(context), _status(context), _key_results(context), _configuration(context), _provenance(context), _acceptance(context.summary), _descriptive(context), _failures(context), _timing(context.summary), _audit(context), _telemetry(context))
     return "# Evaluation report\n\n" + "\n\n".join(sections) + "\n"
