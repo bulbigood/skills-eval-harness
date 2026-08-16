@@ -236,9 +236,14 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
 
 ## Sanitized device telemetry
 
+<details>
+<summary>Complete sanitized device telemetry</summary>
+
 ```json
 {telemetry_json}
 ```
+
+</details>
 
 The report is derived from the bundled, sealed machine-readable evidence. Device telemetry is schema-constrained to numeric capacity and load measurements; hostnames, usernames, paths, environment variables, command lines, network identifiers, container names, labels, and credential material are not accepted.
 """
