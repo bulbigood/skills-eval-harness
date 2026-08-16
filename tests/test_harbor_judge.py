@@ -9,9 +9,11 @@ from pydantic import ValidationError
 from skills_eval_harness.judge import (
     DIMENSION_THRESHOLDS,
     DIMENSIONS,
+    LEGACY_SYSTEM_PROMPTS,
     build_evidence,
     build_judge_messages,
     derive_cell_outcome,
+    judge_messages_match,
     validate_verdict,
 )
 from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events
@@ -41,6 +43,25 @@ def test_worker_output_is_json_data_not_prompt_tail() -> None:
     envelope = json.loads(messages[1]["content"])
     assert envelope["evidence"][0]["text"] == attack
     assert messages[1]["content"].endswith("}")
+
+
+def test_only_pinned_legacy_judge_prompt_matches_the_exact_envelope() -> None:
+    expected = build_judge_messages(
+        scenario={"id": "demo"},
+        evidence=build_evidence([("oracle", "fact")]),
+        scale={"minimum": 0, "maximum": 5},
+    )
+    legacy = [dict(item) for item in expected]
+    legacy[0]["content"] = next(iter(LEGACY_SYSTEM_PROMPTS))
+    assert judge_messages_match(legacy, expected)
+
+    unknown = [dict(item) for item in legacy]
+    unknown[0]["content"] += " unknown"
+    assert not judge_messages_match(unknown, expected)
+
+    tampered = [dict(item) for item in legacy]
+    tampered[1]["content"] += " "
+    assert not judge_messages_match(tampered, expected)
 
 
 def test_bare_score_and_unknown_evidence_fail_closed() -> None:
