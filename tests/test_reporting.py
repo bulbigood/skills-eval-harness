@@ -58,9 +58,10 @@ def summary() -> dict[str, object]:
     }
 
 
-def test_human_sections_explain_verdict_cohort_and_delta_direction() -> None:
-    report = render_human_sections(summary())
-    assert "overall suite verdict of **FAIL**" in report
+def test_paired_report_omits_suite_verdict_and_explains_cohort_and_delta_direction() -> None:
+    report = render_human_sections(summary(), context={"suite_kind": "paired"})
+    assert "Overall suite verdict" not in report
+    assert "suite verdict" not in report
     assert "`4` / `4` planned cells" in report
     assert "treatment minus control" in report
     assert "Positive score deltas are better" in report
@@ -69,7 +70,7 @@ def test_human_sections_explain_verdict_cohort_and_delta_direction() -> None:
 
 
 def test_human_sections_include_breakdowns_failure_ledger_and_audit_json() -> None:
-    report = render_human_sections(summary())
+    report = render_human_sections(summary(), context={"suite_kind": "paired"})
     assert "## By scenario" in report
     assert "`scenario-a`" in report
     assert "## By scenario family" in report
@@ -77,3 +78,34 @@ def test_human_sections_include_breakdowns_failure_ledger_and_audit_json() -> No
     assert "Correct answer, inefficient execution." in report
     assert "<details>" in report
     assert '"common_valid_paired"' in report
+    assert '\n  "statistics": {' in report
+
+
+def test_paired_report_describes_each_arm_with_skill_agent_and_runtime() -> None:
+    report = render_human_sections(summary(), context={
+        "suite_kind": "paired",
+        "skill_name": "iwe-v18",
+        "skill_version": "0.9.9",
+        "skill_url": "https://github.com/iwe-org/skills/tree/abc/skills/iwe-v18",
+        "agent_name": "codex",
+        "agent_version": "0.147.0",
+        "agent_model": "openai/gpt-5.6-luna",
+        "runtime_name": "IWE",
+        "runtime_version": "0.18.0",
+        "runtime_sha256": "abc123",
+        "skill_sha256": "def456",
+    })
+    assert "## Compared arms" in report
+    assert "[iwe-v18](https://github.com/iwe-org/skills/tree/abc/skills/iwe-v18) v0.9.9" in report
+    assert "No skill guidance" in report
+    assert "openai/gpt-5.6-luna" in report
+    assert "IWE 0.18.0" in report
+    assert "reproducibility" in report
+
+
+def test_non_paired_report_keeps_suite_verdict() -> None:
+    report = render_human_sections(
+        {"valid": True, "pass": False, "observed_cells": 1, "expected_cells": 1},
+        context={"suite_kind": "single"},
+    )
+    assert "Overall suite verdict: **FAIL**" in report

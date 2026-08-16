@@ -89,8 +89,11 @@ def _failure_ledger(cells: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-def render_human_sections(summary: dict[str, Any]) -> str:
+def render_human_sections(
+    summary: dict[str, Any], *, context: dict[str, Any] | None = None
+) -> str:
     """Render auditable prose and tables from an already validated summary."""
+    context = context or {}
     paired = summary.get("statistics", {}).get("common_valid_paired")
     if not paired:
         verdict = "PASS" if summary.get("pass") is True else "FAIL"
@@ -99,7 +102,7 @@ def render_human_sections(summary: dict[str, Any]) -> str:
             f"Overall suite verdict: **{verdict}**. Complete cells: "
             f"`{summary.get('observed_cells', 0)}` / `{summary.get('expected_cells', 0)}`.\n\n"
             "## Audit appendix\n\n```json\n"
-            + json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2)
             + "\n```"
         )
     treatment = paired["treatment_arm"]
@@ -109,24 +112,44 @@ def render_human_sections(summary: dict[str, Any]) -> str:
     timing = summary["timing"]
     cells = summary["cells"]
     failures = Counter(cell["arm"] for cell in cells if cell.get("scenario_outcome") == "failed")
-    verdict = "PASS" if summary.get("pass") is True else "FAIL"
     valid = "valid" if summary.get("valid") is True else "invalid"
     excluded = len(reliability.get("excluded_pairs", []))
+    skill_name = context.get("skill_name", "selected skill")
+    skill_version = context.get("skill_version", "version not declared")
+    skill_url = context.get("skill_url")
+    skill_display = f"[{skill_name}]({skill_url})" if skill_url else f"`{skill_name}`"
+    agent = f"{context.get('agent_name', 'unknown')} {context.get('agent_version', 'unknown')}"
+    agent_model = context.get("agent_model", "unknown model")
+    runtime = f"{context.get('runtime_name', 'runtime')} {context.get('runtime_version', 'unknown')}"
+    skill_hash = context.get("skill_sha256", "unknown")
+    skill_source_commit = context.get("skill_source_commit", "unknown")
+    runtime_hash = context.get("runtime_sha256", "unknown")
 
     lines = [
         "## Executive summary",
         "",
-        f"This is a **{valid}** production evaluation with an overall suite verdict of **{verdict}**. "
+        f"This is a **{valid}** production A/B evaluation. "
         f"All `{summary['observed_cells']}` / `{summary['expected_cells']}` planned cells were observed. "
         f"The paired analysis contains `{reliability['common_valid_pairs']}` common-valid pairs; "
         f"`{excluded}` pairs were excluded.",
         "",
         f"The treatment arm `{treatment}` had `{failures[treatment]}` deterministic scenario failures, "
-        f"compared with `{failures[control]}` in `{control}`. A FAIL verdict describes benchmark acceptance; "
-        "it does not mean the evidence bundle is invalid.",
+        f"compared with `{failures[control]}` in `{control}`.",
         "",
-        "All deltas below are **treatment minus control** (`skill − no-skill`). Positive score deltas are "
+        f"All deltas below are **treatment minus control** (`{treatment} − {control}`). Positive score deltas are "
         "better; negative cost, token, and wall-time deltas are better.",
+        "",
+        "## Compared arms",
+        "",
+        "| Arm | Role | Skill guidance | Worker agent | Model | Runtime |",
+        "|---|---|---|---|---|---|",
+        f"| `{treatment}` | Treatment | {skill_display} v{skill_version} | `{agent}` | `{agent_model}` | `{runtime}` |",
+        f"| `{control}` | Control | No skill guidance | `{agent}` | `{agent_model}` | `{runtime}` |",
+        "",
+        f"The treatment skill comes from skill-repository commit `{skill_source_commit}`. Its content SHA-256 "
+        f"is `{skill_hash}`; this immutable content identity is recorded "
+        "for reproducibility. The IWE runtime binary SHA-256 is "
+        f"`{runtime_hash}` and verifies the exact executable shared by both arms.",
         "",
         "## Overall paired comparison",
         "",
@@ -170,7 +193,7 @@ def render_human_sections(summary: dict[str, Any]) -> str:
             {"statistics": summary.get("statistics", {}), "timing": timing},
             ensure_ascii=False,
             sort_keys=True,
-            separators=(",", ":"),
+            indent=2,
         ),
         "```",
         "",

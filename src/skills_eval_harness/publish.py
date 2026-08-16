@@ -8,8 +8,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from .bundle import validate_run_bundle
-from .hashing import atomic_write, canonical_json, sha256_bytes
+from .hashing import atomic_write, sha256_bytes
 from .models import validate_run_id
 from .provenance import Provenance
 from .reporting import render_human_sections
@@ -18,7 +20,7 @@ from .telemetry import validate_device_telemetry
 
 def canonical_repository(root: Path) -> str:
     completed = subprocess.run(
-        ["git", "remote", "get-url", "upstream"],
+        ["git", "remote", "get-url", "origin"],
         cwd=root,
         text=True,
         capture_output=True,
@@ -30,8 +32,23 @@ def canonical_repository(root: Path) -> str:
     if url.startswith("git@github.com:"):
         url = "https://github.com/" + url.removeprefix("git@github.com:")
     if not url.startswith("https://github.com/"):
-        raise ValueError("canonical upstream must be a GitHub HTTPS or SSH URL")
+        raise ValueError("publication repository must be a GitHub HTTPS or SSH URL")
     return url
+
+
+def _skill_metadata(run_dir: Path) -> dict[str, str]:
+    skill_file = run_dir / "inputs/selected-skill/SKILL.md"
+    text = skill_file.read_text(encoding="utf-8")
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        raise ValueError("selected skill must have YAML frontmatter")
+    frontmatter = yaml.safe_load(text.split("\n---\n", 1)[0][4:])
+    if not isinstance(frontmatter, dict):
+        raise ValueError("selected skill frontmatter must be an object")
+    name = frontmatter.get("name")
+    version = frontmatter.get("version")
+    if not isinstance(name, str) or not name or not isinstance(version, str) or not version:
+        raise ValueError("selected skill frontmatter requires string name and version")
+    return {"name": name, "version": version}
 
 
 def _sealed_paths(run_dir: Path) -> tuple[Path, ...]:
@@ -174,25 +191,40 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "disk_read_bytes_total": telemetry.totals.disk_read_bytes,
             "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
         })
-    telemetry_json = canonical_json(telemetry_summary).decode()
-    human_sections = render_human_sections(summary)
+    telemetry_json = json.dumps(telemetry_summary, ensure_ascii=False, sort_keys=True, indent=2)
+    suite_kind = manifest.get("suite", {}).get("kind", "single")
+    context: dict[str, object] = {"suite_kind": suite_kind}
+    if suite_kind == "paired":
+        skill_metadata = _skill_metadata(run_dir)
+        frozen_config = yaml.safe_load((run_dir / "inputs/config.yaml").read_text(encoding="utf-8"))
+        agent_config = frozen_config.get("agents", {}).get(manifest["agent"], {})
+        context.update({
+            "skill_name": skill_metadata["name"],
+            "skill_version": skill_metadata["version"],
+            "skill_url": provenance.source_url,
+            "skill_source_commit": provenance.source_commit,
+            "skill_sha256": provenance.selected_skill_sha256,
+            "agent_name": manifest["agent"],
+            "agent_version": manifest["agent_version"],
+            "agent_model": agent_config.get("model", "unknown"),
+            "runtime_name": "IWE",
+            "runtime_version": provenance.runtime_version,
+            "runtime_sha256": provenance.runtime_sha256,
+        })
+    human_sections = render_human_sections(summary, context=context)
     evidence_line = (
         f"- Sealed evidence: [`{evidence_dir.name}`]({evidence_dir.name}/run-seal.json)\n"
         if include_evidence
         else ""
     )
-    suite_verdict = "PASS" if summary.get("pass") is True else "FAIL"
+    suite_verdict_line = (
+        "" if suite_kind == "paired"
+        else f"- Overall suite verdict: **{'PASS' if summary.get('pass') is True else 'FAIL'}**\n"
+    )
     report = f"""# {run_id}
 
-- Overall suite verdict: **{suite_verdict}**
-- Harness repository: [{repository}]({repository})
-- Harness commit: `{provenance.harness_commit}`
-- Source: [{provenance.source_url}]({provenance.source_url})
-- Source commit: `{provenance.source_commit}`
-- Selected skill SHA-256: `{provenance.selected_skill_sha256}`
-- Runtime version: `{provenance.runtime_version}`
-- Runtime SHA-256: `{provenance.runtime_sha256}`
-- Worker agent: `{manifest['agent']}` `{manifest['agent_version']}`
+{suite_verdict_line}- Evaluation harness repository: [{repository}]({repository})
+- Evaluation harness commit used for this run: [`{provenance.harness_commit}`]({repository}/commit/{provenance.harness_commit})
 - Agent image SHA-256: `{provenance.image_digests['agent']}`
 - Node version: `{manifest['node_version']}`
 - Harbor version: `{provenance.harbor_version}`

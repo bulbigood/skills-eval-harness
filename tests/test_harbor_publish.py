@@ -61,7 +61,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     run = root / "run"
     run.mkdir(parents=True)
     git(root, "init")
-    git(root, "remote", "add", "upstream", "https://github.com/iwe-org/skills-eval-harness.git")
+    git(root, "remote", "add", "origin", "https://github.com/bulbigood/skills-eval-harness.git")
     (run / "summary.json").write_text(json.dumps({"valid": True, "pass": True, "expected_cells": 1, "observed_cells": 1}))
     (run / "provenance.json").write_text(provenance().model_dump_json())
     (run / "run-manifest.json").write_text(json.dumps({"run_id": "canonical-production-run", "run_purpose": "production", "agent": "codex", "agent_version": "0.147.0", "node_version": "22.23.2", "samples": 10, "suite_default_samples": 10}))
@@ -143,8 +143,7 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     text = output.read_text()
     assert text.startswith("# canonical-production-run\n")
     assert "Overall suite verdict: **PASS**" in text
-    assert "https://github.com/iwe-org/skills-eval-harness" in text
-    assert "bulbigood" not in text
+    assert "https://github.com/bulbigood/skills-eval-harness" in text
     assert "Sealed evidence" not in text
     assert output.with_suffix(".md.sha256").is_file()
     assert not output.with_suffix(".evidence").exists()
