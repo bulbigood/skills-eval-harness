@@ -296,6 +296,7 @@ def prepare(args: argparse.Namespace) -> Path:
         "node_version": config.container.node_version,
         "worker_auth_mode": getattr(args, "codex_auth", "api-key"),
         "judge_auth_mode": getattr(args, "judge_auth", "api-key"),
+        "evidence_protocol": "judge-evidence-v2",
         "samples": args.samples,
         "suite_default_samples": load_suite(suite_path).default_samples,
         "run_purpose": getattr(args, "run_purpose", "diagnostic"),

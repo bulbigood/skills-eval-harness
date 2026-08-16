@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import shlex
 import statistics
 from collections import Counter
 from dataclasses import dataclass
@@ -179,7 +181,51 @@ def _final_response(path: Path) -> str:
     return messages[-1]
 
 
-def trial_evidence(job_dir: Path, trial_name: str) -> list[tuple[EvidenceKind, str]]:
+_CMD_STRING = re.compile(r'cmd:"((?:\\.|[^"\\])*)"')
+
+
+def _sanitized_iwe_commands(path: Path) -> list[list[str]]:
+    """Extract only bounded IWE argv; never expose arbitrary shell or tool payloads."""
+    document = json.loads(path.read_text(encoding="utf-8"))
+    steps = document.get("steps") if isinstance(document, dict) else None
+    if not isinstance(steps, list):
+        raise ValueError("trajectory is not a valid ATIF document")
+    commands: list[list[str]] = []
+    for step in steps:
+        if not isinstance(step, dict) or step.get("source") != "agent":
+            continue
+        tool_calls = step.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for call in tool_calls:
+            arguments = call.get("arguments") if isinstance(call, dict) else None
+            source = arguments.get("input") if isinstance(arguments, dict) else None
+            if not isinstance(source, str):
+                continue
+            match = _CMD_STRING.search(source)
+            if match is None:
+                continue
+            try:
+                command = json.loads(f'"{match.group(1)}"')
+                argv = shlex.split(command)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not argv or argv[0] != "iwe":
+                continue
+            if len(argv) > 64 or any(len(value) > 512 or any(ord(char) < 32 for char in value) for value in argv):
+                raise ValueError("IWE command evidence exceeds the safe bounded format")
+            commands.append(argv)
+            if len(commands) > 64:
+                raise ValueError("too many IWE commands in trajectory evidence")
+    return commands
+
+
+def trial_evidence(
+    job_dir: Path,
+    trial_name: str,
+    *,
+    include_command_evidence: bool = True,
+) -> list[tuple[EvidenceKind, str]]:
     root = job_dir / trial_name
     trajectory = root / "agent/trajectory.json"
     result_path = root / "result.json"
@@ -196,6 +242,17 @@ def trial_evidence(job_dir: Path, trial_name: str) -> list[tuple[EvidenceKind, s
         ),
         ("response", f"trajectory sha256={sha256_file(trajectory)}\nfinal assistant response:\n{_final_response(trajectory)}"),
     ]
+    if include_command_evidence:
+        evidence.append((
+            "command",
+            "sanitized IWE argv only; arbitrary shell commands and outputs are excluded\n"
+            + json.dumps(
+                {"protocol": "iwe-command-evidence-v1", "commands": _sanitized_iwe_commands(trajectory)},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ))
     paths = {
         "oracle": root / "verifier/oracle.json",
         "workspace": root / "verifier/workspace-manifest.json",

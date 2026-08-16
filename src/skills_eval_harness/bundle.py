@@ -73,6 +73,7 @@ class CurrentRunManifest(StrictModel):
     node_version: str
     worker_auth_mode: str = "api-key"
     judge_auth_mode: str = "api-key"
+    evidence_protocol: Literal["judge-evidence-v1", "judge-evidence-v2"] = "judge-evidence-v1"
     samples: int
     suite_default_samples: int
     run_purpose: Literal["diagnostic", "production"]
@@ -409,7 +410,11 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
             )
             expected_evidence[identity] = [
                 item.model_dump(mode="json")
-                for item in build_evidence(trial_evidence(job_dir, trial.trial_name))
+                for item in build_evidence(trial_evidence(
+                    job_dir,
+                    trial.trial_name,
+                    include_command_evidence=manifest.evidence_protocol == "judge-evidence-v2",
+                ))
             ]
     if observed_trials != expected_identities:
         raise ValueError("Harbor results do not cover the run identity matrix")

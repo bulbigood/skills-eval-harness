@@ -462,6 +462,7 @@ arms:
             "agent": "codex",
             "agent_version": "0.147.0",
             "node_version": "22.23.2",
+            "evidence_protocol": "judge-evidence-v2",
             "samples": 1,
             "suite_default_samples": 1,
             "suite": suite,
