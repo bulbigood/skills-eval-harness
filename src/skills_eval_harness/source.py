@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import io
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -25,6 +26,21 @@ class ResolvedSkill:
 def _git(*args: str, cwd: Path | None = None) -> str:
     result = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, check=True)
     return result.stdout.strip()
+
+
+def _committed_tree_hashes(repository: Path, skill_relative: Path) -> tuple[str, str]:
+    """Hash the committed bytes that will be sealed, excluding ignored workspace state."""
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    ).stdout
+    with tempfile.TemporaryDirectory() as temporary:
+        snapshot = Path(temporary)
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+            bundle.extractall(snapshot, filter="data")
+        return sha256_tree(snapshot), sha256_tree(snapshot / skill_relative)
 
 
 def resolve_skill(source: str, cache: Path) -> ResolvedSkill:
@@ -48,7 +64,8 @@ def resolve_skill(source: str, cache: Path) -> ResolvedSkill:
         skill = path.resolve()
         relative = skill.relative_to(root).as_posix()
         canonical = f"{url}/tree/{commit}/{relative}"
-        return ResolvedSkill(canonical, commit, root, skill, sha256_tree(root), sha256_tree(skill))
+        repository_sha256, skill_sha256 = _committed_tree_hashes(root, skill.relative_to(root))
+        return ResolvedSkill(canonical, commit, root, skill, repository_sha256, skill_sha256)
 
     parsed = urlparse(source)
     parts = [part for part in parsed.path.split("/") if part]
@@ -68,7 +85,8 @@ def resolve_skill(source: str, cache: Path) -> ResolvedSkill:
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise ValueError("selected skill directory must contain SKILL.md")
     canonical = f"https://github.com/{owner}/{repository}/tree/{commit}/{'/'.join(subdirectory)}"
-    return ResolvedSkill(canonical, commit, checkout, skill, sha256_tree(checkout), sha256_tree(skill))
+    repository_sha256, skill_sha256 = _committed_tree_hashes(checkout, skill.relative_to(checkout))
+    return ResolvedSkill(canonical, commit, checkout, skill, repository_sha256, skill_sha256)
 
 
 def verify_runtime(binary: Path, expected_version: str) -> tuple[Path, str]:

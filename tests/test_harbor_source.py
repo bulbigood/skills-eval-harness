@@ -36,6 +36,23 @@ def test_local_skill_binds_commit_and_bytes(tmp_path: Path) -> None:
     assert resolved.repository_sha256 == sha256_tree(skill.parents[1])
 
 
+def test_local_skill_ignores_untracked_ignored_bytes(tmp_path: Path) -> None:
+    skill = make_repo(tmp_path)
+    repository = skill.parents[1]
+    (repository / ".gitignore").write_text("ignored/\n")
+    git(repository, "add", ".gitignore")
+    git(repository, "commit", "-m", "ignore generated files")
+
+    before = resolve_skill(str(skill), tmp_path / "cache-before")
+    ignored = repository / "ignored/generated.bin"
+    ignored.parent.mkdir()
+    ignored.write_bytes(b"generated and not part of HEAD")
+    after = resolve_skill(str(skill), tmp_path / "cache-after")
+
+    assert after.repository_sha256 == before.repository_sha256
+    assert after.skill_sha256 == before.skill_sha256
+
+
 def test_local_skill_rejects_dirty_repository(tmp_path: Path) -> None:
     skill = make_repo(tmp_path)
     (skill / "SKILL.md").write_text("changed")

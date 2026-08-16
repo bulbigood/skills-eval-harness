@@ -204,12 +204,13 @@ def prepare(args: argparse.Namespace) -> Path:
         materialize_fixture(Path(fixtures[source_name]).resolve(), destination, name)
         resolved_fixtures[name] = destination
     shutil.copy2(runtime, inputs / "runtime")
-    shutil.copytree(source.skill_root, inputs / "selected-skill", ignore=shutil.ignore_patterns(".git"))
     materialize_git_identity(
         source.repository_root,
         inputs / "source-repository",
         inputs / "source-commit-object",
     )
+    skill_relative = source.skill_root.relative_to(source.repository_root)
+    shutil.copytree(inputs / "source-repository" / skill_relative, inputs / "selected-skill")
     materialize_git_identity(ROOT, inputs / "harness-repository", inputs / "harness-commit-object")
     for name in fixture_sources:
         shutil.copytree(fixtures[name], inputs / "fixtures" / name, ignore=shutil.ignore_patterns(".git"))
