@@ -129,6 +129,7 @@ def verify_harbor_lock(
     retries: int,
     agent_name: str,
     agent_version: str,
+    reasoning_effort: str,
     model: str,
     skill_enabled: bool,
 ) -> None:
@@ -174,7 +175,10 @@ def verify_harbor_lock(
         if (
             agent.get("resume_trajectory") is not False
             or agent.get("extra_allowed_hosts") != []
-            or agent.get("kwargs") != {"version": agent_version}
+            or agent.get("kwargs") != {
+                "version": agent_version,
+                "reasoning_effort": reasoning_effort,
+            }
             or agent.get("mcp_servers") != []
         ):
             raise ValueError("Harbor lock agent controls do not match the run plan")

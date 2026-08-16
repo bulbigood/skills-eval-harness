@@ -352,7 +352,7 @@ arms:
             "skills": [],
             "resume_trajectory": False,
             "extra_allowed_hosts": [],
-            "kwargs": {"version": "0.147.0"},
+            "kwargs": {"version": "0.147.0", "reasoning_effort": "low"},
             "mcp_servers": [],
         },
         "skills": [],

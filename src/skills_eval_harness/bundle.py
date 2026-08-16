@@ -392,6 +392,7 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
             retries=config.execution.retries,
             agent_name=profile.harbor_name,
             agent_version=profile.version,
+            reasoning_effort=profile.reasoning,
             model=profile.model,
             skill_enabled=arm["skill"],
         )
