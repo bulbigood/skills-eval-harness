@@ -35,7 +35,7 @@ from .hashing import (
 )
 from .judge import build_evidence, build_judge_messages, derive_cell_outcome
 from .judge_client import judge_cell
-from .models import HarnessConfig, load_config, load_suite, scenario_family, validate_run_id
+from .models import Agent, HarnessConfig, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
 from .security import (
@@ -132,6 +132,14 @@ def verify_agent_image(config: HarnessConfig) -> None:
     )
     if verified.returncode != 0:
         raise ValueError("immutable agent image does not contain the configured toolchain versions")
+
+
+def _agent_kwargs(profile: Agent) -> list[str]:
+    """Render immutable Harbor agent settings for every worker trial."""
+    return [
+        "--ak", f"version={profile.version}",
+        "--ak", f"reasoning_effort={profile.reasoning}",
+    ]
 
 
 def prepare(args: argparse.Namespace) -> Path:
@@ -490,8 +498,8 @@ def _execute_run(
             "-a", profile.harbor_name, "-m", profile.model, "-k", "1",
             "-n", str(arm_concurrency), "--max-retries", str(config.execution.retries), "--env", "docker",
             "--jobs-dir", str(jobs), "--job-name", f"{run_root.name}-{arm_id}", "--yes",
-            "--ak", f"version={profile.version}",
         ]
+        command.extend(_agent_kwargs(profile))
         command.extend(_codex_auth_args(staged_auth))
         if arm["skill"]:
             command.extend(["--skill", str(source.skill_root)])

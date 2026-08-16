@@ -51,6 +51,10 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 `--judge-auth chatgpt` runs the structured judge through an ephemeral, read-only Codex CLI sandbox using a separate temporary copy of the same explicitly selected login. The credential home is mounted outside the judge-visible `/work` directory, and the harness rejects every unknown JSONL lifecycle event or item type as well as any tool-use item before accepting a verdict. `--judge-auth api-key` preserves the Responses API backend and requires `OPENAI_API_KEY`. Both backends feed the same strict local schema and evidence-reference validator. Claude workers continue to require `ANTHROPIC_API_KEY`.
 
+### Model reasoning
+
+Every worker profile in `evals/config.yaml` must declare `reasoning`. The harness freezes that value into `inputs/config.yaml`, passes it to Harbor as `reasoning_effort` for every trial in every arm, and renders it explicitly beside the worker model in published reports. Judge model and reasoning are configured and reported separately under `judge`.
+
 ### Concurrency
 
 `execution.global_concurrency` defaults to `2`; `--jobs N` overrides the global Harbor worker ceiling. Paired arms receive an equal static share (`1 + 1` by default). Odd spare slots remain unused rather than biasing one arm.
