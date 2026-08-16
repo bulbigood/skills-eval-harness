@@ -137,6 +137,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
         raise FileExistsError("refusing to replace an existing publication")
     if not output.is_relative_to(root):
         raise ValueError("publication outputs must be inside the Git repository")
+    output.parent.mkdir(parents=True, exist_ok=True)
 
     repository = canonical_repository(root)
     statistics_json = canonical_json(

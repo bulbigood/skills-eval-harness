@@ -138,7 +138,7 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     root, run = setup(tmp_path)
     renamed = root / "arbitrary-relocated-bundle-name"
     run.rename(renamed)
-    output = root / "published.md"
+    output = root / "reports" / "published.md"
     publish(root=root, run_dir=renamed, output=output)
     text = output.read_text()
     assert text.startswith("# canonical-production-run\n")
@@ -147,7 +147,7 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     assert "bulbigood" not in text
     assert "Sealed evidence" not in text
     assert output.with_suffix(".md.sha256").is_file()
-    assert not (root / "published.evidence").exists()
+    assert not output.with_suffix(".evidence").exists()
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
         cwd=root,
@@ -155,7 +155,7 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
         capture_output=True,
         check=True,
     ).stdout.splitlines()
-    assert set(staged) == {"published.md", "published.md.sha256"}
+    assert set(staged) == {"reports/published.md", "reports/published.md.sha256"}
 
 
 def test_publisher_can_include_revalidated_evidence(tmp_path: Path) -> None:
