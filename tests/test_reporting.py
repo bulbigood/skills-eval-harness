@@ -65,7 +65,7 @@ def context(kind: str = "absolute") -> ReportContext:
             agent_name="codex",
             agent_version="1.2.3",
             worker_model="model|unsafe",
-            worker_reasoning="high",
+            worker_reasoning="medium",
             judge_backend="api-key",
             judge_model="judge",
             judge_reasoning="low",
@@ -146,7 +146,7 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
             report.index(section) for section in required
         )
         assert "skill_compliance" in report
-        assert "model\\|unsafe (reasoning: high)" in report
+        assert "model\\|unsafe (reasoning: medium)" in report
         assert "median" not in report.lower() and '"p50"' not in report
 
 

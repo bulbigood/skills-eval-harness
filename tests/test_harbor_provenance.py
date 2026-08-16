@@ -106,7 +106,7 @@ def lock_for(provenance: Provenance, *, digest: str | None = None) -> dict:
                 "skills": [],
                 "resume_trajectory": False,
                 "extra_allowed_hosts": [],
-                "kwargs": {"version": "0.147.0", "reasoning_effort": "high"},
+                "kwargs": {"version": "0.147.0", "reasoning_effort": "medium"},
                 "mcp_servers": [],
             },
             "skills": [],
@@ -135,7 +135,7 @@ def verify_lock(provenance: Provenance, lock: dict) -> None:
         retries=0,
         agent_name="codex",
         agent_version="0.147.0",
-        reasoning_effort="high",
+        reasoning_effort="medium",
         model="model",
         skill_enabled=False,
     )

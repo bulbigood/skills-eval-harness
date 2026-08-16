@@ -126,8 +126,8 @@ container:
   agent_hosts: {{codex: []}}
   verifier_network_mode: no-network
 agents:
-  codex: {{harbor_name: codex, model: offline-model, version: 0.147.0, credential_env: OPENAI_API_KEY, reasoning: low}}
-  claude: {{harbor_name: claude-code, model: offline-model, version: 2.1.233, credential_env: ANTHROPIC_API_KEY, reasoning: low}}
+  codex: {{harbor_name: codex, model: offline-model, version: 0.147.0, credential_env: OPENAI_API_KEY, reasoning: medium}}
+  claude: {{harbor_name: claude-code, model: offline-model, version: 2.1.233, credential_env: ANTHROPIC_API_KEY, reasoning: medium}}
 judge: {{model: offline-judge, credential_env: OPENAI_API_KEY, reasoning: low, timeout_seconds: 1, concurrency: 1}}
 execution: {{timeout_seconds: 1, global_concurrency: 1, retries: 0}}
 runtimes: {{0.18.0: {runtime_digest}}}
@@ -352,7 +352,7 @@ arms:
             "skills": [],
             "resume_trajectory": False,
             "extra_allowed_hosts": [],
-            "kwargs": {"version": "0.147.0", "reasoning_effort": "low"},
+            "kwargs": {"version": "0.147.0", "reasoning_effort": "medium"},
             "mcp_servers": [],
         },
         "skills": [],
@@ -681,7 +681,7 @@ def _apply_mutation(run: Path, mutation: BundleMutation) -> None:
         text = (
             text.replace("model: offline-model", "model: tampered-model", 1)
             if mutation == "config-model"
-            else text.replace("reasoning: low", "reasoning: high", 1)
+            else text.replace("reasoning: medium", "reasoning: high", 1)
         )
         path.write_text(text)
         provenance = json.loads((run / "provenance.json").read_text())

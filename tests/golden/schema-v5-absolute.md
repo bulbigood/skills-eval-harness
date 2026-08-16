@@ -19,7 +19,7 @@
 
 | Arm | Role | Skill | Worker | Model (reasoning) |
 |---|---|---|---|---|
-| `skill` | `absolute` | demo v1.0.0 | `codex 1.2.3` | `model\|unsafe (reasoning: high)` |
+| `skill` | `absolute` | demo v1.0.0 | `codex 1.2.3` | `model\|unsafe (reasoning: medium)` |
 
 ### Judge configuration
 

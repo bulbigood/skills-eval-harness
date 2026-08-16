@@ -56,7 +56,7 @@ def mocked_validator(monkeypatch: pytest.MonkeyPatch) -> None:
         config = HarnessConfig.model_construct(
             agents={
                 "codex": Agent.model_construct(
-                    model="openai/test", version="0.147.0", reasoning="high"
+                    model="openai/test", version="0.147.0", reasoning="medium"
                 )
             },
             judge=Judge.model_construct(model="judge-test", reasoning="low"),
@@ -276,7 +276,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     ):
         (run / "inputs" / name).write_text("{}")
     (run / "inputs/config.yaml").write_text(
-        "agents:\n  codex:\n    model: openai/test\n    reasoning: high\njudge:\n  model: judge-test\n  reasoning: low\n"
+        "agents:\n  codex:\n    model: openai/test\n    reasoning: medium\njudge:\n  model: judge-test\n  reasoning: low\n"
     )
     (run / "inputs/selected-skill").mkdir()
     (run / "inputs/selected-skill/SKILL.md").write_text(
@@ -566,7 +566,7 @@ def test_publish_validates_fully_unmocked_paired_bundle(tmp_path: Path) -> None:
         == "not-asserted"
     )
     assert validated.config.agents[validated.manifest.agent].model == "offline-model"
-    assert validated.config.agents[validated.manifest.agent].reasoning == "low"
+    assert validated.config.agents[validated.manifest.agent].reasoning == "medium"
 
     output = root / "reports/paired.md"
     publish(root=root, run_dir=run, output=output)
