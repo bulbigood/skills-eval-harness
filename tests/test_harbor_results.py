@@ -18,9 +18,10 @@ from skills_eval_harness.results import (
     trial_evidence,
     trial_scenario_outcome,
 )
+from skills_eval_harness.summary import SummaryV5
 
 
-def summarize_cells(cells: list[dict], identities: set[tuple[str, str, int]], **kwargs: Any) -> dict:
+def summarize_cells(cells: list[dict], identities: set[tuple[str, str, int]], **kwargs: Any) -> SummaryV5:
     arms = sorted({identity[0] for identity in identities})
     paired = len(arms) == 2
     roles = {arm: None for arm in arms}
@@ -86,7 +87,7 @@ def invalid_cell(arm: str, sample: int, reason: str = "judge_validation_failed")
 
 def test_exact_identity_matrix_rejects_missing_unexpected_and_duplicate_cells() -> None:
     expected = {("skill", "one", 1)}
-    assert summarize_cells([valid_cell("skill", 1)], expected)["pass"] is True
+    assert summarize_cells([valid_cell("skill", 1)], expected).pass_ is True
     with pytest.raises(ValueError, match="identity matrix"):
         summarize_cells([], expected)
     with pytest.raises(ValueError, match="identity matrix"):
@@ -100,9 +101,9 @@ def test_exact_identity_matrix_rejects_missing_unexpected_and_duplicate_cells() 
 def test_invalid_cell_can_never_pass_suite() -> None:
     cell = invalid_cell("skill", 1)
     summary = summarize_cells([cell], {("skill", "one", 1)})
-    assert summary["valid"] is False
-    assert summary["pass"] is False
-    assert summary["reliability"]["invalid_reasons_by_arm"] == {
+    assert summary.valid is False
+    assert summary.pass_ is False
+    assert summary.reliability.invalid_reasons_by_arm == {
         "skill": {"judge_validation_failed": 1}
     }
 
@@ -119,11 +120,11 @@ def test_sample_pass_rate_allows_one_of_ten_non_safety_failures() -> None:
 
     summary = summarize_cells(cells, identities)
 
-    criterion = next(item for item in summary["acceptance"]["criteria"] if item["dimension"] == "task_correctness")
-    assert criterion["observed_pass_rate"] == 0.9
-    assert criterion["required_pass_rate"] == 0.9
-    assert criterion["pass"] is True
-    assert summary["pass"] is True
+    criterion = next(item for item in summary.acceptance.criteria if item.dimension == "task_correctness")
+    assert criterion.observed_pass_rate == 0.9
+    assert criterion.required_pass_rate == 0.9
+    assert criterion.pass_ is True
+    assert summary.pass_ is True
 
 
 def test_safety_requires_every_sample_to_pass() -> None:
@@ -138,11 +139,11 @@ def test_safety_requires_every_sample_to_pass() -> None:
 
     summary = summarize_cells(cells, identities)
 
-    criterion = next(item for item in summary["acceptance"]["criteria"] if item["dimension"] == "safety")
-    assert criterion["observed_pass_rate"] == 0.9
-    assert criterion["required_pass_rate"] == 1.0
-    assert criterion["pass"] is False
-    assert summary["pass"] is False
+    criterion = next(item for item in summary.acceptance.criteria if item.dimension == "safety")
+    assert criterion.observed_pass_rate == 0.9
+    assert criterion.required_pass_rate == 1.0
+    assert criterion.pass_ is False
+    assert summary.pass_ is False
 
 
 def test_scenario_failure_is_valid_evidence_and_not_harness_missingness() -> None:
@@ -154,10 +155,10 @@ def test_scenario_failure_is_valid_evidence_and_not_harness_missingness() -> Non
         "scenario_failures": ["hard tool-call maximum exceeded"],
     })
     summary = summarize_cells([cell], {("no-skill", "one", 1)})
-    assert summary["valid"] is True
-    assert summary["pass"] is False
-    assert summary["reliability"]["invalid_cells_by_arm"] == {"no-skill": 0}
-    assert summary["reliability"]["scenario_failures_by_arm"] == {"no-skill": 1}
+    assert summary.valid is True
+    assert summary.pass_ is False
+    assert summary.reliability.invalid_cells_by_arm == {"no-skill": 0}
+    assert summary.reliability.scenario_failures_by_arm == {"no-skill": 1}
 
 
 def test_invalid_cell_reason_is_closed_enum() -> None:
@@ -258,18 +259,18 @@ def test_summary_reports_available_and_common_valid_statistics() -> None:
     ]
     expected = {(arm, "one", sample) for arm in ("no-skill", "skill") for sample in (1, 2)}
     summary = summarize_cells(cells, expected, control_arm="no-skill", treatment_arm="skill", pipeline_elapsed_seconds=20.0)
-    stats = summary["statistics"]
-    assert stats["available_valid"]["overall"]["skill"]["scores"]["task_correctness"]["n"] == 2
-    paired = stats["common_valid_paired"]["overall"]
+    stats = summary.statistics
+    assert stats.available_valid["overall"]["skill"]["scores"]["task_correctness"]["n"] == 2
+    paired = stats.common_valid_paired["overall"]
     assert paired["n"] == 2
     assert paired["arm_distributions"]["control"]["cohort"] == "common-valid"
     assert paired["arm_distributions"]["treatment"]["cohort"] == "common-valid"
     assert paired["score_delta_treatment_minus_control"]["task_correctness"]["mean"] == 1.0
     assert paired["metric_delta_treatment_minus_control"]["wall_time_seconds"]["mean"] == -2.0
     assert paired["metric_delta_treatment_minus_control"]["cost_usd"]["mean"] == 0.0
-    assert stats["common_valid_paired"]["per_scenario"]["one"]["n"] == 2
-    assert stats["common_valid_paired"]["per_family"]["read"]["n"] == 2
-    assert summary["timing"] == {
+    assert stats.common_valid_paired["per_scenario"]["one"]["n"] == 2
+    assert stats.common_valid_paired["per_family"]["read"]["n"] == 2
+    assert summary.timing.model_dump(mode="json", by_alias=True) == {
         "available_valid_summed_cell_seconds": 40.0,
         "common_valid_summed_cell_seconds": 40.0,
         "pipeline_elapsed_seconds": 20.0,
@@ -280,14 +281,14 @@ def test_missing_pair_is_reported_and_never_contaminates_paired_statistics() -> 
     cells = [valid_cell("no-skill", 1), invalid_cell("skill", 1, "judge_validation_failed")]
     expected = {("no-skill", "one", 1), ("skill", "one", 1)}
     summary = summarize_cells(cells, expected, control_arm="no-skill", treatment_arm="skill")
-    assert summary["statistics"]["common_valid_paired"]["overall"]["n"] == 0
-    assert summary["reliability"]["common_valid_pairs"] == 0
-    assert summary["reliability"]["missingness_by_scenario"]["one"]["invalid_reasons"] == {"judge_validation_failed": 1}
-    assert summary["reliability"]["missingness_by_family"]["read"]["invalid_reasons"] == {"judge_validation_failed": 1}
-    assert summary["reliability"]["excluded_pairs"][0]["reasons"] == [
+    assert summary.statistics.common_valid_paired["overall"]["n"] == 0
+    assert summary.reliability.common_valid_pairs == 0
+    assert summary.reliability.missingness_by_scenario["one"]["invalid_reasons"] == {"judge_validation_failed": 1}
+    assert summary.reliability.missingness_by_family["read"]["invalid_reasons"] == {"judge_validation_failed": 1}
+    assert summary.reliability.excluded_pairs[0]["reasons"] == [
         "skill:judge_validation_failed"
     ]
-    assert summary["pass"] is False
+    assert summary.pass_ is False
 
 
 def test_mechanical_scenario_failure_is_distinct_from_malformed_verifier_evidence(tmp_path: Path) -> None:

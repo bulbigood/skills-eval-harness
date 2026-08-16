@@ -93,6 +93,16 @@ class AnalysisPlan(StrictModel):
     def treatment_arm(self) -> str | None:
         return next((arm for arm, role in self.roles.items() if role == "treatment"), None)
 
+    @property
+    def is_paired(self) -> bool:
+        return self.kind == "paired"
+
+    def role_of(self, arm: str) -> Literal["control", "treatment"] | None:
+        try:
+            return self.roles[arm]
+        except KeyError as exc:
+            raise ValueError(f"arm is not part of the analysis plan: {arm}") from exc
+
 class Container(StrictModel):
     image: str
     agent_image: str

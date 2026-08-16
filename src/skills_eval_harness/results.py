@@ -5,21 +5,24 @@ import json
 import math
 import statistics
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from harbor.models.job.result import JobResult, TrialResult
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .hashing import atomic_write_json, sha256_file
-from .acceptance import CURRENT_ACCEPTANCE_POLICY
+from .acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS, METRICS
 from .models import AnalysisPlan
 from .judge import (
-    DIMENSIONS,
     Evidence,
     EvidenceKind,
     JudgeVerdict,
 )
+
+if TYPE_CHECKING:
+    from .summary import SummaryV5
 
 
 EVIDENCE_KINDS: dict[str, EvidenceKind] = {
@@ -239,7 +242,7 @@ def _group_statistics(cells: list[dict], *, cohort: str = "available-valid") -> 
     dimension_sets = {frozenset(cell["scores"]) for cell in valid}
     if len(dimension_sets) > 1:
         raise ValueError("valid cells in one arm cohort have inconsistent score dimensions")
-    dimensions = sorted(next(iter(dimension_sets), frozenset()))
+    dimensions = tuple(name for name in DIMENSIONS if name in next(iter(dimension_sets), frozenset()))
     return {
         "cohort": cohort,
         "scores": {name: distribution([cell["scores"][name] for cell in valid]) for name in dimensions},
@@ -280,67 +283,36 @@ def _paired_statistics(
     }
     result["metric_delta_treatment_minus_control"] = {
         field: distribution([float(treatment[key][field] - control[key][field]) for key in common])
-        for field in ("wall_time_seconds", "n_input_tokens", "n_cache_tokens", "n_output_tokens", "cost_usd")
+        for field in METRICS
     }
     return result
 
 
-def _acceptance_summary(
-    cells: list[dict],
-    *,
-    analysis: AnalysisPlan,
-) -> dict:
-    criteria: list[dict] = []
-    groups = sorted({(cell["arm"], cell["scenario_id"]) for cell in cells})
-    for arm, scenario_id in groups:
-        group = [cell for cell in cells if cell["arm"] == arm and cell["scenario_id"] == scenario_id]
-        dimensions = CURRENT_ACCEPTANCE_POLICY.applicable_dimensions(
-            analysis.roles[arm],
-            {name for cell in group for name in cell.get("scores", {})},
-        )
-        for dimension in dimensions:
-            passed_samples = sum(
-                1
-                for cell in group
-                if cell["valid"]
-                and cell.get("scenario_outcome", "passed") == "passed"
-                and cell.get("scores", {}).get(dimension, float("-inf"))
-                >= CURRENT_ACCEPTANCE_POLICY.score_thresholds[dimension]
-            )
-            total_samples = len(group)
-            observed = passed_samples / total_samples
-            required = CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds[dimension]
-            criteria.append({
-                "arm": arm,
-                "scenario_id": scenario_id,
-                "dimension": dimension,
-                "score_threshold": CURRENT_ACCEPTANCE_POLICY.score_thresholds[dimension],
-                "passed_samples": passed_samples,
-                "total_samples": total_samples,
-                "observed_pass_rate": observed,
-                "required_pass_rate": required,
-                "pass": observed >= required,
-            })
-    return {
-        "policy_id": CURRENT_ACCEPTANCE_POLICY.policy_id,
-        "score_thresholds": CURRENT_ACCEPTANCE_POLICY.score_thresholds,
-        "sample_pass_rate_thresholds": CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds,
-        "criteria": criteria,
-        "pass": all(item["pass"] for item in criteria),
-    }
+@dataclass(frozen=True)
+class SummaryCohort:
+    cells: list[dict]
+    expected_identities: set[tuple[str, str, int]]
+    arms: list[str]
+    scenarios: list[str]
+    families: list[str]
+    analysis: AnalysisPlan
 
 
-def summarize_cells(
+@dataclass(frozen=True)
+class PairedCohort:
+    statistics: dict[str, object]
+    common_valid_keys: list[tuple[str, int]]
+    excluded_pairs: list[dict[str, object]]
+
+
+def _validate_summary_cohort(
     cells: list[dict],
     expected_identities: set[tuple[str, str, int]],
     *,
     expected_families: dict[str, str],
     analysis: AnalysisPlan,
-    pipeline_elapsed_seconds: float | None = None,
-    run_purpose: str = "diagnostic",
-    samples_per_identity: int | None = None,
-    preregistered_samples: int | None = None,
-) -> dict:
+    pipeline_elapsed_seconds: float | None,
+) -> SummaryCohort:
     if not expected_identities:
         raise ValueError("expected identity matrix must not be empty")
     if pipeline_elapsed_seconds is not None and (
@@ -364,101 +336,155 @@ def summarize_cells(
     arms = sorted({identity[0] for identity in expected_identities})
     if set(arms) != set(analysis.arms):
         raise ValueError("analysis arms do not match the identity matrix")
-    paired_run = analysis.kind == "paired"
-    control_arm = analysis.control_arm
-    treatment_arm = analysis.treatment_arm
+    return SummaryCohort(
+        normalized, expected_identities, arms,
+        sorted({identity[1] for identity in expected_identities}),
+        sorted({cell["family"] for cell in normalized}), analysis,
+    )
 
-    valid = all(cell["valid"] for cell in normalized)
-    acceptance = _acceptance_summary(normalized, analysis=analysis)
-    passed = valid and acceptance["pass"]
-    scenarios = sorted({identity[1] for identity in expected_identities})
-    families = sorted({cell["family"] for cell in normalized})
-    per_scenario = {key: _arm_groups([cell for cell in normalized if cell["scenario_id"] == key], arms) for key in scenarios}
-    per_family = {key: _arm_groups([cell for cell in normalized if cell["family"] == key], arms) for key in families}
 
-    valid_by_arm = {arm: sum(cell["valid"] for cell in normalized if cell["arm"] == arm) for arm in arms}
-    invalid_by_arm = {arm: sum(not cell["valid"] for cell in normalized if cell["arm"] == arm) for arm in arms}
-    reasons_by_arm = {
-        arm: dict(sorted(Counter(
-            cell["invalid_reason"] for cell in normalized if cell["arm"] == arm and not cell["valid"]
-        ).items()))
-        for arm in arms
+def _paired_cohort(cohort: SummaryCohort) -> PairedCohort:
+    if cohort.analysis.kind != "paired":
+        return PairedCohort({}, [], [])
+    control_arm = cohort.analysis.control_arm
+    treatment_arm = cohort.analysis.treatment_arm
+    control = {(cell["scenario_id"], cell["sample"]): cell for cell in cohort.cells if cell["arm"] == control_arm}
+    treatment = {(cell["scenario_id"], cell["sample"]): cell for cell in cohort.cells if cell["arm"] == treatment_arm}
+    planned_keys = sorted({(scenario, sample) for _, scenario, sample in cohort.expected_identities})
+    common = [key for key in planned_keys if control[key]["valid"] and treatment[key]["valid"]]
+    excluded = []
+    for scenario_id, sample in planned_keys:
+        reasons = [
+            f"{arm}:{rows[(scenario_id, sample)]['invalid_reason']}"
+            for arm, rows in ((control_arm, control), (treatment_arm, treatment))
+            if not rows[(scenario_id, sample)]["valid"]
+        ]
+        if reasons:
+            excluded.append({"scenario_id": scenario_id, "sample": sample, "reasons": reasons})
+    statistics = {
+        "control_arm": control_arm,
+        "treatment_arm": treatment_arm,
+        "overall": _paired_statistics(control, treatment, planned_keys),
+        "per_scenario": {
+            scenario: _paired_statistics(control, treatment, [key for key in planned_keys if key[0] == scenario])
+            for scenario in cohort.scenarios
+        },
+        "per_family": {
+            family: _paired_statistics(
+                control, treatment,
+                [key for key in planned_keys if control[key]["family"] == family and treatment[key]["family"] == family],
+            )
+            for family in cohort.families
+        },
     }
-    scenario_failures_by_arm = {
-        arm: sum(cell["scenario_outcome"] == "failed" for cell in normalized if cell["arm"] == arm)
-        for arm in arms
-    }
-    planned_by_arm = {arm: sum(identity[0] == arm for identity in expected_identities) for arm in arms}
-    paired: dict[str, object] = {}
-    excluded_pairs: list[dict[str, object]] = []
-    common_valid_keys: list[tuple[str, int]] = []
-    if paired_run:
-        control = {(cell["scenario_id"], cell["sample"]): cell for cell in normalized if cell["arm"] == control_arm}
-        treatment = {(cell["scenario_id"], cell["sample"]): cell for cell in normalized if cell["arm"] == treatment_arm}
-        planned_keys = sorted({(scenario, sample) for _, scenario, sample in expected_identities})
-        common_valid_keys = [key for key in planned_keys if control[key]["valid"] and treatment[key]["valid"]]
-        for scenario_id, sample in planned_keys:
-            reasons = []
-            for label, cohort in ((control_arm, control), (treatment_arm, treatment)):
-                cell = cohort[(scenario_id, sample)]
-                if not cell["valid"]:
-                    reasons.append(f"{label}:{cell['invalid_reason']}")
-            if reasons:
-                excluded_pairs.append({"scenario_id": scenario_id, "sample": sample, "reasons": reasons})
-        paired = {
-            "control_arm": control_arm,
-            "treatment_arm": treatment_arm,
-            "overall": _paired_statistics(control, treatment, planned_keys),
-            "per_scenario": {
-                scenario: _paired_statistics(control, treatment, [key for key in planned_keys if key[0] == scenario])
-                for scenario in scenarios
-            },
-            "per_family": {
-                family: _paired_statistics(
-                    control,
-                    treatment,
-                    [key for key in planned_keys if control[key]["family"] == family and treatment[key]["family"] == family],
-                )
-                for family in families
-            },
-        }
+    return PairedCohort(statistics, common, excluded)
 
-    available_seconds = sum(cell["wall_time_seconds"] or 0.0 for cell in normalized if cell["valid"])
-    common_seconds = 0.0
-    if paired_run:
-        by_identity = {(cell["arm"], cell["scenario_id"], cell["sample"]): cell for cell in normalized}
-        common_seconds = sum(
-            (by_identity[(control_arm, scenario, sample)]["wall_time_seconds"] or 0.0)
-            + (by_identity[(treatment_arm, scenario, sample)]["wall_time_seconds"] or 0.0)
-            for scenario, sample in common_valid_keys
-        )
-    def grouped_missingness(field: str) -> dict[str, dict[str, object]]:
-        groups: dict[str, list[dict]] = {}
-        for cell in normalized:
-            groups.setdefault(str(cell[field]), []).append(cell)
-        return {
-            name: {
-                "planned": len(rows),
-                "valid": sum(1 for row in rows if row["valid"]),
-                "invalid": sum(1 for row in rows if not row["valid"]),
-                "invalid_reasons": dict(sorted(Counter(
-                    row["invalid_reason"] for row in rows if not row["valid"]
-                ).items())),
-            }
-            for name, rows in sorted(groups.items())
-        }
+
+def _grouped_missingness(cells: list[dict], field: str) -> dict[str, dict[str, object]]:
+    groups: dict[str, list[dict]] = {}
+    for cell in cells:
+        groups.setdefault(str(cell[field]), []).append(cell)
     return {
+        name: {
+            "planned": len(rows),
+            "valid": sum(1 for row in rows if row["valid"]),
+            "invalid": sum(1 for row in rows if not row["valid"]),
+            "invalid_reasons": dict(sorted(Counter(
+                row["invalid_reason"] for row in rows if not row["valid"]
+            ).items())),
+        }
+        for name, rows in sorted(groups.items())
+    }
+
+
+def _reliability(cohort: SummaryCohort, paired: PairedCohort) -> dict[str, object]:
+    cells, arms = cohort.cells, cohort.arms
+    valid_by_arm = {arm: sum(cell["valid"] for cell in cells if cell["arm"] == arm) for arm in arms}
+    invalid_by_arm = {arm: sum(not cell["valid"] for cell in cells if cell["arm"] == arm) for arm in arms}
+    planned_by_arm = {arm: sum(identity[0] == arm for identity in cohort.expected_identities) for arm in arms}
+    paired_run = cohort.analysis.kind == "paired"
+    planned_pairs = len(cohort.expected_identities) // 2
+    return {
+        "planned_cells_by_arm": planned_by_arm,
+        "valid_cells_by_arm": valid_by_arm,
+        "invalid_cells_by_arm": invalid_by_arm,
+        "completion_rate_by_arm": {arm: valid_by_arm[arm] / planned_by_arm[arm] for arm in arms},
+        "invalid_reasons_by_arm": {arm: dict(sorted(Counter(
+            cell["invalid_reason"] for cell in cells if cell["arm"] == arm and not cell["valid"]
+        ).items())) for arm in arms},
+        "scenario_failures_by_arm": {arm: sum(
+            cell["scenario_outcome"] == "failed" for cell in cells if cell["arm"] == arm
+        ) for arm in arms},
+        "missingness_by_scenario": _grouped_missingness(cells, "scenario_id"),
+        "missingness_by_family": _grouped_missingness(cells, "family"),
+        "common_valid_pairs": len(paired.common_valid_keys) if paired_run else None,
+        "planned_pairs": planned_pairs if paired_run else None,
+        "common_valid_pair_rate": len(paired.common_valid_keys) / planned_pairs if paired_run else None,
+        "excluded_pairs": paired.excluded_pairs,
+    }
+
+
+def _available_statistics(cohort: SummaryCohort) -> dict[str, object]:
+    return {
+        "overall": _arm_groups(cohort.cells, cohort.arms),
+        "per_scenario": {key: _arm_groups(
+            [cell for cell in cohort.cells if cell["scenario_id"] == key], cohort.arms,
+        ) for key in cohort.scenarios},
+        "per_family": {key: _arm_groups(
+            [cell for cell in cohort.cells if cell["family"] == key], cohort.arms,
+        ) for key in cohort.families},
+    }
+
+
+def _timing_summary(
+    cohort: SummaryCohort, paired: PairedCohort, pipeline_elapsed_seconds: float | None,
+) -> dict[str, float | None]:
+    available = sum(cell["wall_time_seconds"] or 0.0 for cell in cohort.cells if cell["valid"])
+    common: float | None = None
+    if cohort.analysis.kind == "paired":
+        indexed = {(cell["arm"], cell["scenario_id"], cell["sample"]): cell for cell in cohort.cells}
+        common = sum(
+            (indexed[(cohort.analysis.control_arm, scenario, sample)]["wall_time_seconds"] or 0.0)
+            + (indexed[(cohort.analysis.treatment_arm, scenario, sample)]["wall_time_seconds"] or 0.0)
+            for scenario, sample in paired.common_valid_keys
+        )
+    return {"available_valid_summed_cell_seconds": available,
+            "common_valid_summed_cell_seconds": common, "pipeline_elapsed_seconds": pipeline_elapsed_seconds}
+
+
+def summarize_cells(
+    cells: list[dict],
+    expected_identities: set[tuple[str, str, int]],
+    *,
+    expected_families: dict[str, str],
+    analysis: AnalysisPlan,
+    pipeline_elapsed_seconds: float | None = None,
+    run_purpose: str = "diagnostic",
+    samples_per_identity: int | None = None,
+    preregistered_samples: int | None = None,
+) -> "SummaryV5":
+    cohort = _validate_summary_cohort(
+        cells, expected_identities, expected_families=expected_families,
+        analysis=analysis, pipeline_elapsed_seconds=pipeline_elapsed_seconds,
+    )
+    paired_run = analysis.kind == "paired"
+    valid = all(cell["valid"] for cell in cohort.cells)
+    acceptance = CURRENT_ACCEPTANCE_POLICY.evaluate_groups(cohort.cells, roles=analysis.roles)
+    passed = valid and acceptance["pass"]
+    paired = _paired_cohort(cohort)
+    from .summary import SummaryV5
+    return SummaryV5.model_validate({
         "schema_version": 5,
         "analysis": {
             "kind": analysis.kind,
-            "absolute": {"arm": analysis.arms[0]} if analysis.kind == "absolute" else None,
+            "absolute": {"arm": analysis.arms[0]} if not paired_run else None,
             "paired": (
-                {"control_arm": control_arm, "treatment_arm": treatment_arm}
-                if analysis.kind == "paired" else None
+                {"control_arm": analysis.control_arm, "treatment_arm": analysis.treatment_arm}
+                if paired_run else None
             ),
         },
         "expected_cells": len(expected_identities),
-        "observed_cells": len(normalized),
+        "observed_cells": len(cohort.cells),
         "valid": valid,
         "pass": passed,
         "evaluation_status": {
@@ -474,35 +500,12 @@ def summarize_cells(
             },
         },
         "acceptance": acceptance,
-        "reliability": {
-            "planned_cells_by_arm": planned_by_arm,
-            "valid_cells_by_arm": valid_by_arm,
-            "invalid_cells_by_arm": invalid_by_arm,
-            "completion_rate_by_arm": {arm: valid_by_arm[arm] / planned_by_arm[arm] for arm in arms},
-            "invalid_reasons_by_arm": reasons_by_arm,
-            "scenario_failures_by_arm": scenario_failures_by_arm,
-            "missingness_by_scenario": grouped_missingness("scenario_id"),
-            "missingness_by_family": grouped_missingness("family"),
-            "common_valid_pairs": len(common_valid_keys) if paired_run else None,
-            "planned_pairs": len(expected_identities) // 2 if paired_run else None,
-            "common_valid_pair_rate": (
-                len(common_valid_keys) / (len(expected_identities) // 2) if paired_run else None
-            ),
-            "excluded_pairs": excluded_pairs,
-        },
+        "reliability": _reliability(cohort, paired),
         "statistics": {
-            "available_valid": {
-                "overall": _arm_groups(normalized, arms),
-                "per_scenario": per_scenario,
-                "per_family": per_family,
-            },
-            "common_valid_paired": paired,
+            "available_valid": _available_statistics(cohort),
+            "common_valid_paired": paired.statistics,
         },
-        "timing": {
-            "available_valid_summed_cell_seconds": available_seconds,
-            "common_valid_summed_cell_seconds": common_seconds if paired_run else None,
-            "pipeline_elapsed_seconds": pipeline_elapsed_seconds,
-        },
+        "timing": _timing_summary(cohort, paired, pipeline_elapsed_seconds),
         "measurement_scope": {
             "cell_wall_time": "Harbor worker trial wall clock; excludes judging",
             "tokens_and_cost": "Harbor worker totals; excludes judge usage",
@@ -521,8 +524,8 @@ def summarize_cells(
                 else "production-descriptive"
             ),
         },
-        "cells": normalized,
-    }
+        "cells": cohort.cells,
+    })
 
 
 def write_summary(
@@ -536,7 +539,7 @@ def write_summary(
     run_purpose: str = "diagnostic",
     samples_per_identity: int | None = None,
     preregistered_samples: int | None = None,
-) -> dict:
+) -> "SummaryV5":
     summary = summarize_cells(
         cells,
         expected_identities,
@@ -547,5 +550,5 @@ def write_summary(
         samples_per_identity=samples_per_identity,
         preregistered_samples=preregistered_samples,
     )
-    atomic_write_json(path, summary)
+    atomic_write_json(path, summary.model_dump(mode="json", by_alias=True))
     return summary

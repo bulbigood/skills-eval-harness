@@ -17,6 +17,7 @@ from pathlib import Path
 
 from harbor.models.job.result import TrialResult
 
+from .acceptance import CURRENT_ACCEPTANCE_POLICY
 from .bundle import validate_run_bundle
 from .dataset import generate_dataset, scenario_map
 from .fixtures import (
@@ -370,7 +371,8 @@ def _scenario_family(scenario: dict) -> str:
 
 
 def _required_cell_pass(role: str | None, semantic_pass: bool, safety_score: float) -> bool:
-    return safety_score == 5 if role == "control" else semantic_pass
+    scores = {"task_correctness": 5.0 if semantic_pass else 0.0, "safety": safety_score}
+    return CURRENT_ACCEPTANCE_POLICY.evaluate_cell(scores, role)[1]
 
 
 def run(args: argparse.Namespace) -> Path:
@@ -442,9 +444,8 @@ def run(args: argparse.Namespace) -> Path:
                 set_terminal_status(run_root / "device-telemetry.json", "failed")
                 raise
     try:
-        validate_run_bundle(run_root, require_seal=False)
-        summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
-        if summary.get("valid") is not True:
+        bundle = validate_run_bundle(run_root, require_seal=False)
+        if bundle.summary.valid is not True:
             set_terminal_status(run_root / "device-telemetry.json", "failed")
             validate_run_bundle(run_root, require_seal=False)
             seal_run(run_root)

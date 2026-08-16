@@ -16,6 +16,7 @@ The Harbor evaluator uses seven `0..5` dimensions:
 - `evals/scenarios/iwe.yaml` defines requests, capabilities, fixtures, procedures, excellence conditions, and efficiency limits.
 - `evals/suites/*.yaml` defines the exact scenario membership and arms.
 - `src/skills_eval_harness/judge.py` defines the strict response contract.
+- `src/skills_eval_harness/acceptance.py` defines executable policy `dimension-sample-rate-v1`, including measure order/direction, score thresholds, sample-rate thresholds, and cell/group acceptance behavior.
 
 The evaluator has no compatibility path for the former TOML configuration or host subprocess runner.
 

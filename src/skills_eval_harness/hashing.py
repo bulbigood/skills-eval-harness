@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from pydantic import BaseModel
 
 from harbor.publisher.packager import Packager
 from harbor.skills import compute_skill_digest
@@ -16,6 +17,8 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 def canonical_json(value: object) -> bytes:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json", by_alias=True)
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 def sha256_file(path: Path) -> str:

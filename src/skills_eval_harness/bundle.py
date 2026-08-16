@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Literal, Mapping
+
+import yaml
 
 from .fixtures import materialized_fixture_path
 from .hashing import (
@@ -16,10 +21,127 @@ from .hashing import (
     sha256_tree,
 )
 from .judge import Evidence, build_evidence, build_judge_messages, derive_cell_outcome, validate_verdict
-from .models import AnalysisPlan, Suite, load_config, load_suite, scenario_family, validate_run_id
+from .models import AnalysisPlan, HarnessConfig, StrictModel, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
 from .results import CellRecord, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
-from .telemetry import validate_device_telemetry
+from .summary import SummaryV5
+from .telemetry import DeviceTelemetry, validate_device_telemetry
+
+
+@dataclass(frozen=True)
+class BundleLayout:
+    root: Path
+    summary: Path
+    manifest: Path
+    provenance: Path
+    telemetry: Path
+    seal: Path
+    config: Path
+    suite: Path
+    catalog: Path
+    effective_suite: Path
+    fixtures: Path
+    skill: Path
+    jobs: Path
+    cells: Path
+
+    @classmethod
+    def at(cls, root: Path) -> "BundleLayout":
+        return cls(
+            root=root, summary=root / "summary.json", manifest=root / "run-manifest.json",
+            provenance=root / "provenance.json", telemetry=root / "device-telemetry.json",
+            seal=root / "run-seal.json", config=root / "inputs/config.yaml",
+            suite=root / "inputs/suite.yaml", catalog=root / "inputs/scenario-catalog.yaml",
+            effective_suite=root / "inputs/effective-suite.json", fixtures=root / "inputs/fixture-sources.json",
+            skill=root / "inputs/selected-skill", jobs=root / "jobs", cells=root / "cells",
+        )
+
+
+class ManifestExecution(StrictModel):
+    global_concurrency: int | None = None
+    judge_concurrency: int
+    arm_concurrency_batches: list[dict[str, int]]
+
+
+class CurrentRunManifest(StrictModel):
+    schema_version: Literal[1]
+    run_id: str
+    suite: Suite
+    suite_repository_path: str
+    agent: str
+    agent_version: str
+    node_version: str
+    worker_auth_mode: str = "api-key"
+    judge_auth_mode: str = "api-key"
+    judge_backend: str = "api-key"
+    samples: int
+    suite_default_samples: int
+    run_purpose: Literal["diagnostic", "production"]
+    execution: ManifestExecution
+    datasets: dict[str, str]
+
+
+class SelectedSkillMetadata(StrictModel):
+    name: str
+    version: str
+
+
+@dataclass(frozen=True)
+class ValidatedBundle:
+    layout: BundleLayout
+    manifest: CurrentRunManifest
+    provenance: Provenance
+    config: HarnessConfig
+    suite: Suite
+    analysis: AnalysisPlan
+    catalog: Mapping[str, Mapping[str, Any]]
+    cells: tuple[CellRecord, ...]
+    summary: SummaryV5
+    telemetry: DeviceTelemetry
+    skill: SelectedSkillMetadata
+
+
+@dataclass(frozen=True)
+class BundleInputs:
+    layout: BundleLayout
+    stored_summary: SummaryV5
+    manifest: CurrentRunManifest
+    provenance: Provenance
+    telemetry: DeviceTelemetry
+
+
+@dataclass(frozen=True)
+class VerifiedInputs:
+    bundle: BundleInputs
+    config: HarnessConfig
+    authored_suite: Suite
+
+
+@dataclass(frozen=True)
+class VerifiedPlan:
+    inputs: VerifiedInputs
+    suite: Suite
+    analysis: AnalysisPlan
+    arms: list[dict[str, Any]]
+    scenarios: list[str]
+    samples: int
+    expected_identities: set[tuple[str, str, int]]
+
+
+@dataclass(frozen=True)
+class ReproducedTrials:
+    plan: VerifiedPlan
+    evidence: dict[tuple[str, str, int], list[dict]]
+    scenario_outcomes: dict[tuple[str, str, int], str]
+    scenario_failures: dict[tuple[str, str, int], list[str]]
+
+
+@dataclass(frozen=True)
+class ReproducedCells:
+    trials: ReproducedTrials
+    catalog: dict[str, dict[str, Any]]
+    cells: list[dict]
+
 
 
 def _load_json(path: Path) -> dict:
@@ -55,18 +177,26 @@ def _verify_git_commit_tree(commit_object: Path, *, expected_commit: str, expect
         raise ValueError("sealed Git commit object does not name the claimed tree")
 
 
-def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
+def _load_bundle_inputs(run_dir: Path, *, require_seal: bool) -> BundleInputs:
+    layout = BundleLayout.at(run_dir)
     if require_seal:
         verify_run_seal(run_dir)
-    stored_summary = _load_json(run_dir / "summary.json")
-    if stored_summary.get("schema_version") != 5:
+    stored_summary_raw = _load_json(layout.summary)
+    if type(stored_summary_raw.get("schema_version")) is not int or stored_summary_raw["schema_version"] != 5:
         raise ValueError("only summary schema version 5 is supported")
-    validate_device_telemetry(run_dir / "device-telemetry.json")
-    manifest = _load_json(run_dir / "run-manifest.json")
-    validate_run_id(manifest.get("run_id"))
+    telemetry = validate_device_telemetry(layout.telemetry)
+    stored_summary = SummaryV5.model_validate(stored_summary_raw)
+    manifest = CurrentRunManifest.model_validate(_load_json(layout.manifest))
+    validate_run_id(manifest.run_id)
     provenance = Provenance.model_validate_json(
         (run_dir / "provenance.json").read_text(encoding="utf-8")
     ).validated()
+    return BundleInputs(layout, stored_summary, manifest, provenance, telemetry)
+
+
+def _verify_canonical_inputs_and_provenance(bundle: BundleInputs) -> VerifiedInputs:
+    layout, provenance = bundle.layout, bundle.provenance
+    run_dir = layout.root
     config_path = run_dir / "inputs/config.yaml"
     suite_path = run_dir / "inputs/suite.yaml"
     catalog_path = run_dir / "inputs/scenario-catalog.yaml"
@@ -152,18 +282,25 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             expected_tree=revision.tree,
         )
     authored_suite = load_suite(suite_path)
+    return VerifiedInputs(bundle, config, authored_suite)
+
+
+def _verify_effective_suite_and_plan(inputs: VerifiedInputs) -> VerifiedPlan:
+    bundle, authored_suite = inputs.bundle, inputs.authored_suite
+    layout, manifest, provenance = bundle.layout, bundle.manifest, bundle.provenance
+    run_dir, suite_path, effective_path = layout.root, layout.suite, layout.effective_suite
     effective = _load_json(effective_path)
-    if manifest.get("schema_version") != 1 or manifest.get("suite") != effective:
+    if manifest.schema_version != 1 or manifest.suite.model_dump(mode="json") != effective:
         raise ValueError("run manifest does not match the effective suite")
-    if manifest.get("suite_default_samples") != authored_suite.default_samples:
+    if manifest.suite_default_samples != authored_suite.default_samples:
         raise ValueError("run manifest default sample count does not match the authored suite")
-    if manifest.get("run_purpose") == "production" and (
+    if manifest.run_purpose == "production" and (
         effective != authored_suite.model_dump(mode="json")
-        or manifest.get("samples") != authored_suite.default_samples
+        or manifest.samples != authored_suite.default_samples
     ):
         raise ValueError("production run does not match the preregistered suite matrix")
-    if manifest.get("run_purpose") == "production":
-        suite_repository_path = manifest.get("suite_repository_path")
+    if manifest.run_purpose == "production":
+        suite_repository_path = manifest.suite_repository_path
         if (
             not isinstance(suite_repository_path, str)
             or Path(suite_repository_path).parent.as_posix() != "evals/suites"
@@ -174,7 +311,7 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             raise ValueError("production suite is not bound to the sealed canonical harness commit")
     arms = effective.get("arms")
     scenarios = effective.get("scenarios")
-    samples = manifest.get("samples")
+    samples = manifest.samples
     if not isinstance(arms, list) or not isinstance(scenarios, list) or not isinstance(samples, int) or samples < 1:
         raise ValueError("invalid run plan identity matrix")
     expected_identities = {
@@ -183,24 +320,39 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
         for scenario_id in scenarios
         for sample in range(1, samples + 1)
     }
+    effective_suite = Suite.model_validate(effective)
+    catalog_payload = yaml.safe_load(layout.catalog.read_text(encoding="utf-8"))
+    catalog = {item["id"]: item for item in catalog_payload["scenarios"]}
+    expected_families = {
+        scenario_id: scenario_family(catalog[scenario_id]) for scenario_id in effective_suite.scenarios
+    }
+    analysis = AnalysisPlan.from_suite(effective_suite, families=expected_families, samples=samples)
+    return VerifiedPlan(inputs, effective_suite, analysis, arms, scenarios, samples, expected_identities)
+
+
+def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
+    bundle, config = plan.inputs.bundle, plan.inputs.config
+    manifest, provenance, run_dir = bundle.manifest, bundle.provenance, bundle.layout.root
+    arms, scenarios, samples = plan.arms, plan.scenarios, plan.samples
+    expected_identities = plan.expected_identities
     expected_evidence: dict[tuple[str, str, int], list[dict]] = {}
     expected_scenario_outcomes: dict[tuple[str, str, int], str] = {}
     expected_scenario_failures: dict[tuple[str, str, int], list[str]] = {}
     observed_trials: set[tuple[str, str, int]] = set()
-    profile = config.agents[manifest["agent"]]
-    if manifest.get("agent_version") != profile.version:
+    profile = config.agents[manifest.agent]
+    if manifest.agent_version != profile.version:
         raise ValueError("run manifest agent version does not match the sealed config")
-    if manifest.get("node_version") != config.container.node_version:
+    if manifest.node_version != config.container.node_version:
         raise ValueError("run manifest Node version does not match the sealed config")
-    has_judge_concurrency = "judge_concurrency" in manifest["execution"]
+    has_judge_concurrency = manifest.execution.judge_concurrency is not None
     if has_judge_concurrency != (provenance.judge_concurrency is not None):
         raise ValueError("judge concurrency must be present in both manifest and provenance")
-    if has_judge_concurrency and manifest["execution"]["judge_concurrency"] != provenance.judge_concurrency:
+    if has_judge_concurrency and manifest.execution.judge_concurrency != provenance.judge_concurrency:
         raise ValueError("judge concurrency does not match sealed provenance")
-    batches = manifest["execution"]["arm_concurrency_batches"]
+    batches = manifest.execution.arm_concurrency_batches
     for arm in arms:
         arm_id = arm["id"]
-        dataset = (run_dir / manifest["datasets"][arm_id]).resolve()
+        dataset = (run_dir / manifest.datasets[arm_id]).resolve()
         if not dataset.is_relative_to(run_dir):
             raise ValueError("dataset path escapes the run directory")
         for task in sorted(path for path in dataset.iterdir() if path.is_dir()):
@@ -261,8 +413,20 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             ]
     if observed_trials != expected_identities:
         raise ValueError("Harbor results do not cover the run identity matrix")
+    return ReproducedTrials(
+        plan, expected_evidence, expected_scenario_outcomes, expected_scenario_failures,
+    )
 
-    catalog = {item["id"]: item for item in __import__("yaml").safe_load(catalog_path.read_text(encoding="utf-8"))["scenarios"]}
+
+def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
+    plan = trials.plan
+    bundle = plan.inputs.bundle
+    manifest, run_dir = bundle.manifest, bundle.layout.root
+    arms = plan.arms
+    catalog = {
+        item["id"]: item
+        for item in yaml.safe_load(bundle.layout.catalog.read_text(encoding="utf-8"))["scenarios"]
+    }
     cells = []
     for path in sorted((run_dir / "cells").glob("*.json")):
         raw = _load_json(path)
@@ -274,11 +438,11 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             raise ValueError("cell family does not match the sealed scenario")
         if cell["valid"]:
             identity = (cell["arm"], cell["scenario_id"], cell["sample"])
-            if cell["evidence"] != expected_evidence[identity]:
+            if cell["evidence"] != trials.evidence[identity]:
                 raise ValueError("stored cell evidence does not reproduce from Harbor artifacts")
-            if cell["scenario_outcome"] != expected_scenario_outcomes[identity]:
+            if cell["scenario_outcome"] != trials.scenario_outcomes[identity]:
                 raise ValueError("stored scenario outcome does not reproduce from Harbor artifacts")
-            if cell["scenario_failures"] != expected_scenario_failures[identity]:
+            if cell["scenario_failures"] != trials.scenario_failures[identity]:
                 raise ValueError("stored scenario failures do not reproduce from Harbor artifacts")
             evidence = tuple(Evidence.model_validate(item) for item in cell["evidence"])
             oracle_items = [item for item in evidence if item.kind == "oracle"]
@@ -292,7 +456,7 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             if oracle.get("procedure") != scenario["procedure"] or oracle.get("excellent") != scenario["excellent"]:
                 raise ValueError("semantic oracle does not match the sealed scenario")
             task_id = f"{cell['scenario_id']}--sample-{cell['sample']:03d}"
-            task = run_dir / manifest["datasets"][cell["arm"]] / task_id
+            task = run_dir / manifest.datasets[cell["arm"]] / task_id
             before = {
                 item["path"]: item["sha256"]
                 for item in json.loads((task / "tests/before-tree.json").read_text(encoding="utf-8"))
@@ -316,9 +480,9 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             expected_scores, expected_pass, expected_required = derive_cell_outcome(
                 verdict,
                 role=arm.get("role"),
-                agent=manifest["agent"],
+                agent=manifest.agent,
             )
-            if expected_scenario_outcomes[identity] == "failed":
+            if trials.scenario_outcomes[identity] == "failed":
                 expected_pass = False
                 expected_required = False
             if (
@@ -333,27 +497,65 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             if cell["judge_messages"] != expected_messages:
                 raise ValueError("stored judge messages do not match sealed scenario and evidence")
         cells.append(cell)
+    return ReproducedCells(trials, catalog, cells)
 
-    effective_suite = Suite.model_validate(effective)
+
+def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5:
+    plan = reproduced.trials.plan
+    bundle = plan.inputs.bundle
+    manifest, stored_summary = bundle.manifest, bundle.stored_summary
+    effective_suite, samples = plan.suite, plan.samples
+    catalog, cells = reproduced.catalog, reproduced.cells
     expected_families = {
         scenario_id: scenario_family(catalog[scenario_id])
         for scenario_id in effective_suite.scenarios
     }
     recomputed = summarize_cells(
         cells,
-        expected_identities,
+        plan.expected_identities,
         expected_families=expected_families,
-        analysis=AnalysisPlan.from_suite(
-            effective_suite, families=expected_families, samples=samples
-        ),
-        pipeline_elapsed_seconds=stored_summary.get("timing", {}).get("pipeline_elapsed_seconds"),
-        run_purpose=manifest["run_purpose"],
+        analysis=plan.analysis,
+        pipeline_elapsed_seconds=stored_summary.timing.pipeline_elapsed_seconds,
+        run_purpose=manifest.run_purpose,
         samples_per_identity=samples,
-        preregistered_samples=manifest["suite"]["default_samples"],
+        preregistered_samples=manifest.suite.default_samples,
     )
-    if not has_judge_concurrency:
+    if manifest.execution.judge_concurrency is None:
         raise ValueError("summary schema does not match the sealed execution generation")
-    if canonical_json(recomputed) != canonical_json(stored_summary):
+    if canonical_json(recomputed.model_dump(mode="json", by_alias=True)) != canonical_json(stored_summary.model_dump(mode="json", by_alias=True)):
         raise ValueError("summary does not recompute from sealed cells")
-
     return recomputed
+
+
+def _load_selected_skill(layout: BundleLayout) -> SelectedSkillMetadata:
+    skill_text = (layout.skill / "SKILL.md").read_text(encoding="utf-8")
+    if not skill_text.startswith("---\n") or "\n---\n" not in skill_text[4:]:
+        raise ValueError("selected skill must have YAML frontmatter")
+    metadata = yaml.safe_load(skill_text.split("\n---\n", 1)[0][4:])
+    version = metadata.get("metadata", {}).get("version") if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str) or not isinstance(version, str):
+        raise ValueError("selected skill frontmatter requires string name and version")
+    return SelectedSkillMetadata(name=metadata["name"], version=version)
+
+
+def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> ValidatedBundle:
+    """Validate and independently reproduce a sealed current-schema run bundle."""
+    bundle = _load_bundle_inputs(run_dir, require_seal=require_seal)
+    verified = _verify_canonical_inputs_and_provenance(bundle)
+    plan = _verify_effective_suite_and_plan(verified)
+    trials = _reproduce_harbor_trials(plan)
+    reproduced = _reproduce_cells(trials)
+    summary = _recompute_summary(reproduced)
+    return ValidatedBundle(
+        layout=bundle.layout,
+        manifest=bundle.manifest,
+        provenance=bundle.provenance,
+        config=verified.config,
+        suite=plan.suite,
+        analysis=plan.analysis,
+        catalog=MappingProxyType({key: MappingProxyType(value) for key, value in reproduced.catalog.items()}),
+        cells=tuple(CellRecord.model_validate(cell) for cell in reproduced.cells),
+        summary=summary,
+        telemetry=bundle.telemetry,
+        skill=_load_selected_skill(bundle.layout),
+    )

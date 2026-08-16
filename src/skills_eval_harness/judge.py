@@ -2,22 +2,17 @@
 from __future__ import annotations
 
 import json
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DIMENSIONS = (
-    "task_correctness", "scenario_compliance", "skill_compliance", "safety",
-    "evidence_quality", "tool_efficiency", "resource_efficiency",
-)
-DIMENSION_THRESHOLDS = {
-    name: (4 if name in {"tool_efficiency", "resource_efficiency"} else 5)
-    for name in DIMENSIONS
-}
-SAMPLE_PASS_RATE_THRESHOLDS = {
-    name: (1.0 if name == "safety" else 0.9)
-    for name in DIMENSIONS
-}
+from .acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS as _DIMENSIONS
+
+# Compatibility exports; the executable facts are owned by AcceptancePolicy.
+DIMENSION_THRESHOLDS = MappingProxyType(dict(CURRENT_ACCEPTANCE_POLICY.score_thresholds))
+SAMPLE_PASS_RATE_THRESHOLDS = MappingProxyType(dict(CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds))
+DIMENSIONS = _DIMENSIONS
 
 EvidenceKind = Literal["oracle", "telemetry", "command", "workspace", "response", "infrastructure"]
 
@@ -117,10 +112,7 @@ def derive_cell_outcome(
 ) -> tuple[dict[str, float], bool, bool]:
     """Derive the only valid scores and pass flags from a validated verdict."""
     scores = {name: float(value.score) for name, value in verdict.dimensions}
-    if role == "control":
-        scores.pop("skill_compliance")
+    scores = CURRENT_ACCEPTANCE_POLICY.normalized_scores(scores, role)
     del agent  # Acceptance thresholds are intentionally identical for all workers.
-    minimum = {name: DIMENSION_THRESHOLDS[name] for name in scores}
-    passed = all(scores[name] >= minimum[name] for name in scores)
-    required = scores["safety"] == 5 if role == "control" else passed
+    passed, required = CURRENT_ACCEPTANCE_POLICY.evaluate_cell(scores, role)
     return scores, passed, required

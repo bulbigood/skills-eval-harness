@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .hashing import atomic_write_json
 
@@ -19,21 +19,21 @@ class StrictTelemetryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class LegacyHostCapacity(StrictTelemetryModel):
+class HostCapacityBase(StrictTelemetryModel):
     logical_cpus: int = Field(ge=1)
     total_memory_bytes: int = Field(ge=1)
     total_swap_bytes: int = Field(ge=0)
     docker_metrics_available: bool
 
 
-class HostCapacity(LegacyHostCapacity):
+class HostCapacity(HostCapacityBase):
     telemetry_scope: Literal["whole-host"]
     network_scope: Literal["default-route-interfaces"]
     disk_scope: Literal["physical-block-devices"]
     filesystem_scope: Literal["root-filesystem"]
 
 
-class LegacyDeviceSample(StrictTelemetryModel):
+class DeviceSampleBase(StrictTelemetryModel):
     elapsed_ms: int = Field(ge=0)
     cpu_percent: float = Field(ge=0, le=100, allow_inf_nan=False)
     load1: float = Field(ge=0, allow_inf_nan=False)
@@ -42,7 +42,7 @@ class LegacyDeviceSample(StrictTelemetryModel):
     running_containers: int = Field(ge=0)
 
 
-class DeviceSample(LegacyDeviceSample):
+class DeviceSample(DeviceSampleBase):
     network_rx_bytes: int = Field(ge=0)
     network_tx_bytes: int = Field(ge=0)
     disk_read_bytes: int = Field(ge=0)
@@ -79,15 +79,6 @@ class IoTotals(StrictTelemetryModel):
     disk_write_bytes: int = Field(ge=0)
 
 
-class LegacyDeviceTelemetry(StrictTelemetryModel):
-    schema_version: Literal[1]
-    started_unix_ms: int = Field(ge=0)
-    finished_unix_ms: int = Field(ge=0)
-    host: LegacyHostCapacity
-    samples: tuple[LegacyDeviceSample, ...] = Field(min_length=1)
-    docker_oom_events: int = Field(ge=0)
-
-
 class DeviceTelemetry(StrictTelemetryModel):
     schema_version: Literal[2]
     started_unix_ms: int = Field(ge=0)
@@ -100,9 +91,6 @@ class DeviceTelemetry(StrictTelemetryModel):
     docker_oom_events: int = Field(ge=0)
     sampling_errors: int = Field(ge=0)
     terminal_status: Literal["completed", "failed"]
-
-
-_TELEMETRY_ADAPTER = TypeAdapter(LegacyDeviceTelemetry | DeviceTelemetry)
 
 
 def _validate_v2_consistency(telemetry: DeviceTelemetry) -> None:
@@ -144,27 +132,24 @@ def _validate_v2_consistency(telemetry: DeviceTelemetry) -> None:
 _COUNTERS = ("network_rx_bytes", "network_tx_bytes", "disk_read_bytes", "disk_write_bytes")
 
 
-def validate_device_telemetry(path: Path) -> LegacyDeviceTelemetry | DeviceTelemetry:
+def validate_device_telemetry(path: Path) -> DeviceTelemetry:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        telemetry = _TELEMETRY_ADAPTER.validate_python(payload)
+        telemetry = DeviceTelemetry.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
         raise ValueError(f"invalid or sensitive device telemetry: {exc}") from exc
     if telemetry.finished_unix_ms < telemetry.started_unix_ms:
         raise ValueError("invalid or sensitive device telemetry: finish precedes start")
-    if isinstance(telemetry, DeviceTelemetry):
-        try:
-            _validate_v2_consistency(telemetry)
-        except ValueError as exc:
-            raise ValueError(f"invalid device telemetry: {exc}") from exc
+    try:
+        _validate_v2_consistency(telemetry)
+    except ValueError as exc:
+        raise ValueError(f"invalid device telemetry: {exc}") from exc
     return telemetry
 
 
 def set_terminal_status(path: Path, status: Literal["completed", "failed"]) -> DeviceTelemetry:
     """Atomically update a schema-v2 terminal status before sealing."""
     telemetry = validate_device_telemetry(path)
-    if not isinstance(telemetry, DeviceTelemetry):
-        raise ValueError("legacy telemetry terminal status cannot be updated")
     updated = telemetry.model_copy(update={"terminal_status": status})
     atomic_write_json(path, updated.model_dump(mode="json"))
     return updated

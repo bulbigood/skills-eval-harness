@@ -10,11 +10,8 @@ from pathlib import Path
 
 from .bundle import validate_run_bundle
 from .hashing import atomic_write, sha256_bytes
-from .models import validate_run_id
-from .provenance import Provenance
-from .report_models import ReportContext
+from .report_models import ReportContext, validate_publication_filename
 from .reporting import render_report
-from .telemetry import validate_device_telemetry
 
 
 def canonical_repository(root: Path) -> str:
@@ -105,33 +102,41 @@ def _stage(root: Path, paths: tuple[Path, ...]) -> None:
         temporary_index.unlink(missing_ok=True)
 
 
+def _git_index(root: Path) -> Path:
+    raw = subprocess.run(
+        ["git", "rev-parse", "--git-path", "index"], cwd=root, text=True,
+        capture_output=True, check=True,
+    ).stdout.strip()
+    return (root / raw).resolve() if not Path(raw).is_absolute() else Path(raw)
+
+
+def _publication_checkpoint(_name: str) -> None:
+    """Fault-injection seam for transaction tests."""
+
+
 def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool = False) -> Path:
-    summary = validate_run_bundle(run_dir, require_seal=True)
-    telemetry = validate_device_telemetry(run_dir / "device-telemetry.json")
+    bundle = validate_run_bundle(run_dir, require_seal=True)
+    summary, telemetry, manifest, provenance = bundle.summary, bundle.telemetry, bundle.manifest, bundle.provenance
     if (
         telemetry.schema_version != 2
         or telemetry.terminal_status != "completed"
         or telemetry.sampling_errors != 0
     ):
         raise ValueError("publication requires complete healthy schema-v2 telemetry")
-    manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
-    validate_run_id(manifest.get("run_id"))
-    provenance = Provenance.model_validate_json(
-        (run_dir / "provenance.json").read_text(encoding="utf-8")
-    ).validated()
     if provenance.harness_dirty:
         raise ValueError("publication requires a clean harness commit")
-    if summary.get("valid") is not True:
+    if summary.valid is not True:
         raise ValueError("publication requires complete structurally valid evidence")
-    if summary.get("observed_cells") != summary.get("expected_cells"):
+    if summary.observed_cells != summary.expected_cells:
         raise ValueError("publication rejects incomplete runs")
     if (
-        manifest.get("run_purpose") != "production"
-        or manifest.get("samples") != manifest.get("suite_default_samples")
+        manifest.run_purpose != "production"
+        or manifest.samples != manifest.suite_default_samples
     ):
         raise ValueError("publication requires a production run at the exact preregistered sample count")
 
     output = output.resolve()
+    validate_publication_filename(output)
     root = root.resolve()
     evidence_dir = output.with_suffix(".evidence")
     checksum = output.with_suffix(output.suffix + ".sha256")
@@ -145,7 +150,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
     samples = telemetry.samples
     telemetry_summary = {
         "schema_version": telemetry.schema_version,
-        "scope": getattr(telemetry.host, "telemetry_scope", "whole-host"),
+        "scope": telemetry.host.telemetry_scope,
         "network_scope": telemetry.host.network_scope,
         "disk_scope": telemetry.host.disk_scope,
         "rootfs_scope": telemetry.host.filesystem_scope,
@@ -160,8 +165,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
         "running_containers_max": max(sample.running_containers for sample in samples),
         "docker_oom_events": telemetry.docker_oom_events,
     }
-    if telemetry.schema_version == 2:
-        telemetry_summary.update({
+    telemetry_summary.update({
             "terminal_status": telemetry.terminal_status,
             "sampling_errors": telemetry.sampling_errors,
             "network_rx_bytes_per_second_max": telemetry.peaks.network_rx_bytes_per_second,
@@ -174,26 +178,11 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "network_tx_bytes_total": telemetry.totals.network_tx_bytes,
             "disk_read_bytes_total": telemetry.totals.disk_read_bytes,
             "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
-        })
-    telemetry_json = json.dumps(telemetry_summary, ensure_ascii=False, sort_keys=True, indent=2)
-    context = ReportContext.from_validated_bundle(
-        run_dir, summary=summary, output=output, repository=repository,
-        include_evidence=include_evidence,
+    })
+    context = ReportContext.from_bundle(
+        bundle, output=output, repository=repository, include_evidence=include_evidence, telemetry=telemetry_summary,
     )
-    report = render_report(context) + f"""
-## Sanitized device telemetry
-
-<details>
-<summary>Complete sanitized device telemetry</summary>
-
-```json
-{telemetry_json}
-```
-
-</details>
-
-The report is derived from the bundled, sealed machine-readable evidence. Device telemetry is schema-constrained to numeric capacity and load measurements; hostnames, usernames, paths, environment variables, command lines, network identifiers, container names, labels, and credential material are not accepted.
-"""
+    report = render_report(context)
 
     lock_path = output.with_name(f".{output.name}.publish.lock")
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -207,6 +196,9 @@ The report is derived from the bundled, sealed machine-readable evidence. Device
     temporary_output = temporary_root / output.name
     temporary_checksum = temporary_root / checksum.name
     created: list[Path] = []
+    index = _git_index(root)
+    initial_index = index.read_bytes() if index.exists() else None
+    staged = False
     try:
         if include_evidence:
             temporary_evidence.mkdir(parents=True)
@@ -222,12 +214,22 @@ The report is derived from the bundled, sealed machine-readable evidence. Device
         if include_evidence:
             temporary_evidence.rename(evidence_dir)
             created.append(evidence_dir)
+            _publication_checkpoint("evidence-installed")
         os.link(temporary_checksum, checksum)
         created.append(checksum)
+        _publication_checkpoint("checksum-installed")
         os.link(temporary_output, output)
         created.append(output)
+        _publication_checkpoint("report-installed")
         _stage(root, (output, checksum, *((evidence_dir,) if include_evidence else ())))
+        staged = True
+        _publication_checkpoint("staged")
     except Exception:
+        if staged:
+            if initial_index is None:
+                index.unlink(missing_ok=True)
+            else:
+                atomic_write(index, initial_index)
         for path in reversed(created):
             if path.is_dir():
                 shutil.rmtree(path)
