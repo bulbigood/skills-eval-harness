@@ -60,6 +60,14 @@ def _status(context: ReportContext) -> str:
              f"- Suite acceptance: **{'PASS' if acceptance.passed else 'FAIL'}** (`{_escape(acceptance.policy_id)}`)"]
     if context.identity.suite_kind == "paired":
         lines.append("- Statistical superiority: **not asserted**")
+    samples = context.summary.interpretation.samples_per_identity
+    if samples == 1:
+        lines.append(
+            "- Inference limitation: this smoke run contains one sample per arm/scenario. "
+            "PASS means only that the observed samples satisfy the declared acceptance policy; "
+            "run-to-run variability, reproducibility, and generalizable treatment superiority "
+            "were not estimated."
+        )
     return "\n".join(lines)
 
 
@@ -142,7 +150,14 @@ def _audit(context: ReportContext) -> str:
     payload = {key: summary[key] for key in ("schema_version", "analysis", "evaluation_status", "acceptance", "reliability", "statistics", "timing", "measurement_scope", "interpretation")}
     encoded = json.dumps(_without_medians(payload), ensure_ascii=False, sort_keys=True, indent=2)
     fence = "`" * (max((len(run) for run in re.findall(r"`+", encoded)), default=2) + 1)
-    return "\n".join(("## Audit appendix", "", "Cells, judge inputs, and verdicts remain in the sealed evidence bundle and are not duplicated here.", "", f"{fence}json", encoded, fence))
+    return "\n".join((
+        "## Audit appendix", "",
+        "Cell-level evidence is retained in the source bundle's sealed publishable-evidence scope "
+        "but is not included in this publication. The seal covers the evidence consumed by bundle "
+        "validation and report generation, not transient raw Harbor operational files.", "",
+        "<details>", "<summary>Complete sanitized summary JSON</summary>", "",
+        f"{fence}json", encoded, fence, "", "</details>",
+    ))
 
 
 def _telemetry(context: ReportContext) -> str:

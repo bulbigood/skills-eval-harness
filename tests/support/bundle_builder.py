@@ -471,7 +471,7 @@ arms:
                 "judge_concurrency": 1,
                 "arm_concurrency_batches": [{"ordinary": 1}],
             },
-            "judge_backend": "offline-fixture",
+
         },
     )
     atomic_write_json(

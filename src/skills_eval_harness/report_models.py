@@ -127,7 +127,7 @@ class ReportContext(ReportModel):
             execution=ReportExecution(
                 agent_name=manifest.agent, agent_version=manifest.agent_version,
                 worker_model=agent.model, worker_reasoning=agent.reasoning,
-                judge_backend=manifest.judge_backend, judge_model=judge.model, judge_reasoning=judge.reasoning,
+                judge_backend=manifest.judge_auth_mode, judge_model=judge.model, judge_reasoning=judge.reasoning,
                 runtime_version=provenance.runtime_version, runtime_sha256=provenance.runtime_sha256,
                 harbor_version=provenance.harbor_version, node_version=provenance.node_version,
                 agent_image_sha256=provenance.image_digests["agent"],

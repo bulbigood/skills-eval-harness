@@ -49,7 +49,7 @@ def mocked_validator(monkeypatch: pytest.MonkeyPatch) -> None:
             samples=raw_manifest["samples"],
             suite_default_samples=raw_manifest["suite_default_samples"],
             run_purpose=raw_manifest["run_purpose"],
-            judge_backend="api-key",
+
             datasets={"arm": "datasets/arm"},
             execution=None,
         )

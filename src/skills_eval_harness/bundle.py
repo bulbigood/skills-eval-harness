@@ -73,7 +73,6 @@ class CurrentRunManifest(StrictModel):
     node_version: str
     worker_auth_mode: str = "api-key"
     judge_auth_mode: str = "api-key"
-    judge_backend: str = "api-key"
     samples: int
     suite_default_samples: int
     run_purpose: Literal["diagnostic", "production"]

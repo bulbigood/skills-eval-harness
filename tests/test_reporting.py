@@ -160,6 +160,24 @@ def test_only_paired_report_adds_comparison_semantics() -> None:
     assert "Excluded pairs" in paired
 
 
+def test_single_sample_report_states_inference_limit() -> None:
+    model = context("paired")
+    interpretation = model.summary.interpretation.model_copy(
+        update={"samples_per_identity": 1, "preregistered_samples": 1}
+    )
+    report = render_report(
+        model.model_copy(
+            update={
+                "summary": model.summary.model_copy(
+                    update={"interpretation": interpretation}
+                )
+            }
+        )
+    )
+    assert "this smoke run contains one sample per arm/scenario" in report
+    assert "run-to-run variability" in report
+
+
 def test_report_is_deterministic_and_escapes_untrusted_markdown() -> None:
     model = context("absolute")
     assert render_report(model) == render_report(model)
@@ -177,7 +195,9 @@ def test_audit_fence_cannot_be_closed_by_untrusted_backticks() -> None:
         "## Sanitized device telemetry", 1
     )[0]
     assert "````json" in audit
-    assert audit.rstrip().endswith("````")
+    assert "````\n\n</details>" in audit
+    assert "<summary>Complete sanitized summary JSON</summary>" in audit
+    assert "transient raw Harbor operational files" in audit
 
 
 def test_link_destinations_are_encoded_independently_from_text() -> None:

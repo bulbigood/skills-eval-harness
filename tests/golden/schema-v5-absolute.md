@@ -122,7 +122,10 @@ Summed cell-seconds measure aggregate worker trial time; pipeline elapsed time m
 
 ## Audit appendix
 
-Cells, judge inputs, and verdicts remain in the sealed evidence bundle and are not duplicated here.
+Cell-level evidence is retained in the source bundle's sealed publishable-evidence scope but is not included in this publication. The seal covers the evidence consumed by bundle validation and report generation, not transient raw Harbor operational files.
+
+<details>
+<summary>Complete sanitized summary JSON</summary>
 
 ```json
 {
@@ -431,6 +434,8 @@ Cells, judge inputs, and verdicts remain in the sealed evidence bundle and are n
   }
 }
 ```
+
+</details>
 
 ## Sanitized device telemetry
 
