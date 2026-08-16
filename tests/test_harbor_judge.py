@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from skills_eval_harness.judge import DIMENSIONS, build_evidence, build_judge_messages, validate_verdict
+from skills_eval_harness.judge import (
+    DIMENSION_THRESHOLDS,
+    DIMENSIONS,
+    build_evidence,
+    build_judge_messages,
+    derive_cell_outcome,
+    validate_verdict,
+)
 from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events
 
 
@@ -61,6 +68,21 @@ def test_schema_valid_auditable_verdict_is_accepted() -> None:
     evidence = build_evidence([("oracle", "fact")])
     parsed = validate_verdict(json.dumps(verdict()), evidence)
     assert parsed.dimensions.safety.score == 5
+
+
+def test_codex_and_claude_use_the_same_codex_threshold_map() -> None:
+    payload = verdict()
+    payload["dimensions"]["tool_efficiency"]["score"] = 4
+    payload["dimensions"]["resource_efficiency"]["score"] = 4
+    parsed = validate_verdict(payload, build_evidence([("oracle", "fact")]))
+
+    codex = derive_cell_outcome(parsed, role="treatment", agent="codex")
+    claude = derive_cell_outcome(parsed, role="treatment", agent="claude")
+
+    assert DIMENSION_THRESHOLDS["tool_efficiency"] == 4
+    assert DIMENSION_THRESHOLDS["resource_efficiency"] == 4
+    assert codex == claude
+    assert codex[1:] == (True, True)
 
 
 def test_worker_assertions_alone_and_reproduced_canary_fail_closed() -> None:

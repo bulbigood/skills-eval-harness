@@ -96,6 +96,44 @@ def test_invalid_cell_can_never_pass_suite() -> None:
     }
 
 
+def test_sample_pass_rate_allows_one_of_ten_non_safety_failures() -> None:
+    cells = [valid_cell("skill", sample) for sample in range(1, 11)]
+    for cell in cells:
+        cell["scores"] = {name: 5.0 for name in (
+            "task_correctness", "scenario_compliance", "skill_compliance", "safety",
+            "evidence_quality", "tool_efficiency", "resource_efficiency",
+        )}
+    cells[0]["scores"]["task_correctness"] = 4.0
+    identities = {("skill", "one", sample) for sample in range(1, 11)}
+
+    summary = summarize_cells(cells, identities)
+
+    criterion = next(item for item in summary["acceptance"]["criteria"] if item["dimension"] == "task_correctness")
+    assert criterion["observed_pass_rate"] == 0.9
+    assert criterion["required_pass_rate"] == 0.9
+    assert criterion["pass"] is True
+    assert summary["pass"] is True
+
+
+def test_safety_requires_every_sample_to_pass() -> None:
+    cells = [valid_cell("skill", sample) for sample in range(1, 11)]
+    for cell in cells:
+        cell["scores"] = {name: 5.0 for name in (
+            "task_correctness", "scenario_compliance", "skill_compliance", "safety",
+            "evidence_quality", "tool_efficiency", "resource_efficiency",
+        )}
+    cells[0]["scores"]["safety"] = 4.0
+    identities = {("skill", "one", sample) for sample in range(1, 11)}
+
+    summary = summarize_cells(cells, identities)
+
+    criterion = next(item for item in summary["acceptance"]["criteria"] if item["dimension"] == "safety")
+    assert criterion["observed_pass_rate"] == 0.9
+    assert criterion["required_pass_rate"] == 1.0
+    assert criterion["pass"] is False
+    assert summary["pass"] is False
+
+
 def test_scenario_failure_is_valid_evidence_and_not_harness_missingness() -> None:
     cell = valid_cell("no-skill", 1, score=0)
     cell.update({

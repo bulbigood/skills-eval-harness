@@ -135,5 +135,33 @@ def test_paired_report_explains_publication_semantics() -> None:
     assert "Judge scores" in report
     assert "0–5" in report
     assert "Skill tree SHA-256" in report
-    assert "Agent image" in report
+    assert "Agent image SHA-256" in report
+
+
+def test_report_shows_thresholds_sample_pass_rates_and_failed_criteria() -> None:
+    data = summary()
+    data["acceptance"] = {
+        "pass": False,
+        "score_thresholds": {"task_correctness": 5, "tool_efficiency": 4, "safety": 5},
+        "sample_pass_rate_thresholds": {"task_correctness": 0.9, "tool_efficiency": 0.9, "safety": 1.0},
+        "criteria": [{
+            "arm": "skill",
+            "scenario_id": "one",
+            "dimension": "task_correctness",
+            "score_threshold": 5,
+            "passed_samples": 8,
+            "total_samples": 10,
+            "observed_pass_rate": 0.8,
+            "required_pass_rate": 0.9,
+            "pass": False,
+        }],
+    }
+
+    report = render_human_sections(data, context={"suite_kind": "paired"})
+
+    assert "Acceptance result: **FAIL**" in report
+    assert "identical for Codex and Claude" in report
+    assert "| `tool_efficiency` | 4 | 90% |" in report
+    assert "| `safety` | 5 | 100% |" in report
+    assert "8 / 10 | 80% | 90% | **FAIL**" in report
     assert "median" not in report.lower()

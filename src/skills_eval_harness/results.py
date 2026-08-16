@@ -12,7 +12,14 @@ from harbor.models.job.result import JobResult, TrialResult
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .hashing import atomic_write_json, sha256_file
-from .judge import DIMENSIONS, Evidence, EvidenceKind, JudgeVerdict
+from .judge import (
+    DIMENSION_THRESHOLDS,
+    DIMENSIONS,
+    SAMPLE_PASS_RATE_THRESHOLDS,
+    Evidence,
+    EvidenceKind,
+    JudgeVerdict,
+)
 
 
 EVIDENCE_KINDS: dict[str, EvidenceKind] = {
@@ -278,6 +285,50 @@ def _paired_statistics(
     return result
 
 
+def _acceptance_summary(
+    cells: list[dict],
+    *,
+    control_arm: str | None,
+) -> dict:
+    criteria: list[dict] = []
+    groups = sorted({(cell["arm"], cell["scenario_id"]) for cell in cells})
+    for arm, scenario_id in groups:
+        group = [cell for cell in cells if cell["arm"] == arm and cell["scenario_id"] == scenario_id]
+        dimensions = (
+            ("safety",)
+            if arm == control_arm
+            else tuple(name for name in DIMENSIONS if any(name in cell.get("scores", {}) for cell in group))
+        )
+        for dimension in dimensions:
+            passed_samples = sum(
+                1
+                for cell in group
+                if cell["valid"]
+                and cell.get("scenario_outcome", "passed") == "passed"
+                and cell.get("scores", {}).get(dimension, float("-inf")) >= DIMENSION_THRESHOLDS[dimension]
+            )
+            total_samples = len(group)
+            observed = passed_samples / total_samples
+            required = SAMPLE_PASS_RATE_THRESHOLDS[dimension]
+            criteria.append({
+                "arm": arm,
+                "scenario_id": scenario_id,
+                "dimension": dimension,
+                "score_threshold": DIMENSION_THRESHOLDS[dimension],
+                "passed_samples": passed_samples,
+                "total_samples": total_samples,
+                "observed_pass_rate": observed,
+                "required_pass_rate": required,
+                "pass": observed >= required,
+            })
+    return {
+        "score_thresholds": dict(DIMENSION_THRESHOLDS),
+        "sample_pass_rate_thresholds": dict(SAMPLE_PASS_RATE_THRESHOLDS),
+        "criteria": criteria,
+        "pass": all(item["pass"] for item in criteria),
+    }
+
+
 def summarize_cells(
     cells: list[dict],
     expected_identities: set[tuple[str, str, int]],
@@ -318,7 +369,8 @@ def summarize_cells(
         raise ValueError("single-arm summaries must not declare paired roles")
 
     valid = all(cell["valid"] for cell in normalized)
-    passed = valid and all(cell["required_pass"] for cell in normalized)
+    acceptance = _acceptance_summary(normalized, control_arm=control_arm)
+    passed = valid and acceptance["pass"]
     scenarios = sorted({identity[1] for identity in expected_identities})
     families = sorted({cell["family"] for cell in normalized})
     per_scenario = {key: _arm_groups([cell for cell in normalized if cell["scenario_id"] == key], arms) for key in scenarios}
@@ -396,11 +448,12 @@ def summarize_cells(
             for name, rows in sorted(groups.items())
         }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "expected_cells": len(expected_identities),
         "observed_cells": len(normalized),
         "valid": valid,
         "pass": passed,
+        "acceptance": acceptance,
         "reliability": {
             "planned_cells_by_arm": planned_by_arm,
             "valid_cells_by_arm": valid_by_arm,

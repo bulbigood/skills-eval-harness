@@ -353,11 +353,18 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
             raise ValueError("current bundles cannot downgrade to summary schema 3")
         # Historical bundles predate explicit tested-scenario outcome fields.
         recomputed["schema_version"] = 3
+        recomputed.pop("acceptance")
+        recomputed["pass"] = recomputed["valid"] and all(cell["required_pass"] for cell in recomputed["cells"])
         recomputed["reliability"].pop("scenario_failures_by_arm", None)
         for cell in recomputed["cells"]:
             cell.pop("scenario_outcome", None)
             cell.pop("scenario_failures", None)
-    elif stored_summary.get("schema_version") != 4 or not has_judge_concurrency:
+    elif stored_summary.get("schema_version") == 4 and has_judge_concurrency:
+        # Historical bundles predate dimension-level sample pass-rate acceptance.
+        recomputed["schema_version"] = 4
+        recomputed.pop("acceptance")
+        recomputed["pass"] = recomputed["valid"] and all(cell["required_pass"] for cell in recomputed["cells"])
+    elif stored_summary.get("schema_version") != 5 or not has_judge_concurrency:
         raise ValueError("summary schema does not match the sealed execution generation")
     if canonical_json(recomputed) != canonical_json(stored_summary):
         raise ValueError("summary does not recompute from sealed cells")
