@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -209,7 +210,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "agent_version": manifest["agent_version"],
             "agent_model": agent_config.get("model", "unknown"),
             "worker_reasoning": agent_config.get(
-                "reasoning", "not explicitly configured (agent default)"
+                "reasoning", "unset in sealed configuration; effective value unknown and not independently reproducible"
             ),
             "judge_model": frozen_config.get("judge", {}).get("model", "not recorded"),
             "judge_reasoning": frozen_config.get("judge", {}).get(
@@ -218,6 +219,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "runtime_name": "IWE",
             "runtime_version": provenance.runtime_version,
             "runtime_sha256": provenance.runtime_sha256,
+            "agent_image_sha256": provenance.image_digests["agent"],
         })
     human_sections = render_human_sections(summary, context=context)
     evidence_line = (
@@ -229,8 +231,12 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
         "" if suite_kind == "paired"
         else f"- Overall suite verdict: **{'PASS' if summary.get('pass') is True else 'FAIL'}**\n"
     )
-    report = f"""# {run_id}
+    revision_match = re.search(r"-v(\d+)$", output.stem)
+    report_revision = f"v{revision_match.group(1)}" if revision_match else "unversioned"
+    report = f"""# Evaluation report
 
+- Run ID: `{run_id}`
+- Report revision: `{report_revision}`
 {suite_verdict_line}- Evaluation harness repository: [{repository}]({repository})
 - Evaluation harness commit used for this run: [`{provenance.harness_commit}`]({repository}/commit/{provenance.harness_commit})
 - Agent image SHA-256: `{provenance.image_digests['agent']}`

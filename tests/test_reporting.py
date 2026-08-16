@@ -117,3 +117,23 @@ def test_non_paired_report_keeps_suite_verdict() -> None:
         context={"suite_kind": "single"},
     )
     assert "Overall suite verdict: **FAIL**" in report
+
+
+def test_paired_report_explains_publication_semantics() -> None:
+    report = render_human_sections(
+        summary(),
+        context={
+            "suite_kind": "paired",
+            "worker_reasoning": "unset in sealed configuration; effective value unknown",
+        },
+    )
+    assert "Evidence integrity: **valid and complete**" in report
+    assert "not a benchmark PASS verdict" in report
+    assert "Descriptive paired comparison" in report
+    assert "no superiority verdict is asserted" in report
+    assert "`1` scenario" in report
+    assert "Judge scores" in report
+    assert "0–5" in report
+    assert "Skill tree SHA-256" in report
+    assert "Agent image" in report
+    assert "median" not in report.lower()

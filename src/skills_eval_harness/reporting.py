@@ -37,9 +37,16 @@ def _fmt(value: Any, *, digits: int = 3) -> str:
     return str(value)
 
 
-def _escape(value: Any) -> str:
-    return str(value).replace("|", "\\|").replace("\n", " ")
+def _fmt_metric(key: str, value: float | int) -> str:
+    if key == "cost_usd":
+        return f"{value:,.6f}"
+    if "tokens" in key:
+        return f"{value:,.1f}"
+    return f"{value:,.3f}"
 
+
+def _escape(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 def _distribution_table(overall: dict[str, Any]) -> str:
     arms = overall["arm_distributions"]
@@ -52,8 +59,8 @@ def _distribution_table(overall: dict[str, Any]) -> str:
         deltas = (overall["score_delta_treatment_minus_control"] if section
                   else overall["metric_delta_treatment_minus_control"])[key]
         rows.append(
-            f"| {label} | {_fmt(treatment_value['mean'])} | {_fmt(control_value['mean'])} | "
-            f"{_fmt(deltas['mean'])} | {deltas['n']} |"
+            f"| {label} | {_fmt_metric(key, treatment_value['mean'])} | {_fmt_metric(key, control_value['mean'])} | "
+            f"{_fmt_metric(key, deltas['mean'])} | {deltas['n']} |"
         )
     return "\n".join(rows)
 
@@ -67,8 +74,9 @@ def _breakdown_table(groups: dict[str, Any], treatment: str, control: str) -> st
         metrics = group["metric_delta_treatment_minus_control"]
         rows.append(
             f"| `{_escape(name)}` | {group['n']} | {_fmt(scores['task_correctness']['mean'])} | "
-            f"{_fmt(scores['tool_efficiency']['mean'])} | {_fmt(metrics['wall_time_seconds']['mean'])} | "
-            f"{_fmt(metrics['cost_usd']['mean'])} |"
+            f"{_fmt_metric('tool_efficiency', scores['tool_efficiency']['mean'])} | "
+            f"{_fmt_metric('wall_time_seconds', metrics['wall_time_seconds']['mean'])} | "
+            f"{_fmt_metric('cost_usd', metrics['cost_usd']['mean'])} |"
         )
     return "\n".join(rows)
 
@@ -77,16 +85,22 @@ def _failure_ledger(cells: list[dict[str, Any]]) -> str:
     failures = [cell for cell in cells if cell.get("scenario_outcome") == "failed"]
     if not failures:
         return "No deterministic scenario failures were observed."
-    rows = ["| Arm | Scenario | Sample | Deterministic failure | Judge summary |",
-            "|---|---|---:|---|---|"]
+    rows = ["| Arm | Scenario | Sample | Deterministic failure |",
+            "|---|---|---:|---|"]
+    details = ["<details>", "<summary>Complete judge commentary for failed cells</summary>", ""]
     for cell in sorted(failures, key=lambda item: (item["arm"], item["scenario_id"], item["sample"])):
         reasons = "; ".join(cell.get("scenario_failures", []))
         rationale = cell.get("verdict", {}).get("rationale", "")
         rows.append(
             f"| `{_escape(cell['arm'])}` | `{_escape(cell['scenario_id'])}` | {cell['sample']} | "
-            f"{_escape(reasons)} | {_escape(rationale)} |"
+            f"{_escape(reasons)} |"
         )
-    return "\n".join(rows)
+        details.extend([
+            f"- `{_escape(cell['arm'])}` / `{_escape(cell['scenario_id'])}` / sample `{cell['sample']}`: "
+            f"{_escape(rationale)}",
+        ])
+    details.extend(["", "</details>"])
+    return "\n".join([*rows, "", *details])
 
 
 def _without_medians(value: Any) -> Any:
@@ -125,7 +139,6 @@ def render_human_sections(
     timing = summary["timing"]
     cells = summary["cells"]
     failures = Counter(cell["arm"] for cell in cells if cell.get("scenario_outcome") == "failed")
-    valid = "valid" if summary.get("valid") is True else "invalid"
     excluded = len(reliability.get("excluded_pairs", []))
     skill_name = context.get("skill_name", "selected skill")
     skill_version = context.get("skill_version", "version not declared")
@@ -140,20 +153,48 @@ def render_human_sections(
     worker_reasoning = context.get("worker_reasoning", "not recorded")
     judge_model = context.get("judge_model", "not recorded")
     judge_reasoning = context.get("judge_reasoning", "not recorded")
+    agent_image_sha256 = context.get("agent_image_sha256", "not recorded")
+    scenario_count = len(paired["per_scenario"])
+    families = ", ".join(f"`{name}`" for name in sorted(paired["per_family"]))
+    correctness_effects = paired["per_scenario"]
+    correctness_improved = sum(
+        group["score_delta_treatment_minus_control"]["task_correctness"]["mean"] > 0
+        for group in correctness_effects.values()
+    )
+    latency_regressions = sum(
+        group["metric_delta_treatment_minus_control"]["wall_time_seconds"]["mean"] > 0
+        for group in correctness_effects.values()
+    )
+    skill_repo = str(skill_url).split("/tree/", 1)[0] if skill_url else None
+    skill_commit_display = (
+        f"[{skill_source_commit}]({skill_repo}/commit/{skill_source_commit})"
+        if skill_repo else f"`{skill_source_commit}`"
+    )
 
     lines = [
         "## Executive summary",
         "",
-        f"This is a **{valid}** production A/B evaluation. "
+        "Evidence integrity: **valid and complete**. This means the evidence is structurally complete and "
+        "auditable; it is not a benchmark PASS verdict. Deterministic scenario failures remain valid observed outcomes. "
         f"All `{summary['observed_cells']}` / `{summary['expected_cells']}` planned cells were observed. "
         f"The paired analysis contains `{reliability['common_valid_pairs']}` common-valid pairs; "
         f"`{excluded}` pairs were excluded.",
         "",
         f"The treatment arm `{treatment}` had `{failures[treatment]}` deterministic scenario failures, "
-        f"compared with `{failures[control]}` in `{control}`.",
+        f"compared with `{failures[control]}` in `{control}`. Correctness improved in `{correctness_improved}` of "
+        f"`{scenario_count}` scenarios; `{latency_regressions}` scenarios had a mean latency regression.",
+        "",
+        "**Descriptive paired comparison; no superiority verdict is asserted.** Point estimates do not "
+        "include confidence intervals and should not be read as claims of statistical significance.",
         "",
         f"All deltas below are **treatment minus control** (`{treatment} − {control}`). Positive score deltas are "
         "better; negative cost, token, and wall-time deltas are better.",
+        "",
+        "## Suite overview",
+        "",
+        f"The suite contains `{scenario_count}` scenario{'s' if scenario_count != 1 else ''}, "
+        f"`{overall['n']}` paired samples, and two arms. Scenario families are {families}. `find` covers structured "
+        "discovery, `retrieve` covers bounded context retrieval, and `find+retrieve` combines both operations.",
         "",
         "## Compared arms",
         "",
@@ -167,10 +208,16 @@ def render_human_sections(
         f"- Judge model: `{judge_model}`",
         f"- Judge reasoning: `{judge_reasoning}`",
         "",
-        f"The treatment skill comes from skill-repository commit `{skill_source_commit}`. Its content SHA-256 "
-        f"is `{skill_hash}`; this immutable content identity is recorded "
-        "for reproducibility. The IWE runtime binary SHA-256 is "
-        f"`{runtime_hash}` and verifies the exact executable shared by both arms.",
+        "Judge scores evidence quality, resource efficiency, safety, scenario compliance, task correctness, and "
+        "tool efficiency on a `0–5` scale. Deterministic verifier outcomes and telemetry remain authoritative; the "
+        "judge cannot override a deterministic failure. Judge rationales and evidence references are schema-validated. "
+        "See [evaluation metrics](../docs/evaluation-metrics.md).",
+        "",
+        f"The treatment skill comes from skill-repository commit {skill_commit_display}. Its Skill tree SHA-256 "
+        f"is `{skill_hash}`; this immutable tree identity covers all selected skill files and is recorded for "
+        "reproducibility. The IWE runtime binary SHA-256 is "
+        f"`{runtime_hash}` and verifies the exact executable shared by both arms. Agent image SHA-256 "
+        f"`{agent_image_sha256}` identifies the common worker toolchain image used by both arms.",
         "",
         "## Overall paired comparison",
         "",

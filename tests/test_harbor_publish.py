@@ -150,7 +150,9 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     output = root / "reports" / "published.md"
     publish(root=root, run_dir=renamed, output=output)
     text = output.read_text()
-    assert text.startswith("# canonical-production-run\n")
+    assert text.startswith("# Evaluation report\n")
+    assert "- Run ID: `canonical-production-run`" in text
+    assert "- Report revision: `unversioned`" in text
     assert "Overall suite verdict: **PASS**" in text
     assert "https://github.com/bulbigood/skills-eval-harness" in text
     assert "Sealed evidence" not in text

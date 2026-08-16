@@ -45,4 +45,4 @@ For Codex, tool and resource efficiency require at least 4; the remaining guided
 
 ## Statistics
 
-Reports include overall, per-scenario, and per-family distributions for scores and wall time: `n`, mean, sample standard deviation, and p05/p25/p50/p75/p95. Paired suites additionally report right-minus-left score and wall-time deltas on the common-valid pair cohort. Summed cell-seconds and end-to-end pipeline elapsed time are reported separately.
+Sealed summaries include overall, per-scenario, and per-family distributions for scores and wall time: `n`, mean, sample standard deviation, and p05/p25/p50/p75/p95. Paired suites additionally retain treatment-minus-control score and wall-time deltas on the common-valid pair cohort. Public reports use means and mean paired deltas; median/p50 fields remain sealed but are intentionally omitted from the current publication format. Summed cell-seconds and end-to-end pipeline elapsed time are reported separately.
