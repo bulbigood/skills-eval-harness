@@ -91,6 +91,8 @@ def _agents_template(source: str | None) -> tuple[bytes | None, str | None]:
 
 def validate_repository() -> None:
     config = load_config(CONFIG)
+    if any(profile.reasoning is None for profile in config.agents.values()):
+        raise ValueError("every live worker profile must declare reasoning")
     installed = importlib.metadata.version("harbor")
     if installed != config.harbor_version:
         raise ValueError(f"Harbor version mismatch: config={config.harbor_version}, installed={installed}")
@@ -136,6 +138,8 @@ def verify_agent_image(config: HarnessConfig) -> None:
 
 def _agent_kwargs(profile: Agent) -> list[str]:
     """Render immutable Harbor agent settings for every worker trial."""
+    if profile.reasoning is None:
+        raise ValueError("worker reasoning must be explicit before execution")
     return [
         "--ak", f"version={profile.version}",
         "--ak", f"reasoning_effort={profile.reasoning}",

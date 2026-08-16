@@ -79,7 +79,7 @@ class Agent(StrictModel):
     model: str
     version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
     credential_env: Literal["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
-    reasoning: Literal["low", "medium", "high"]
+    reasoning: Literal["low", "medium", "high"] | None = None
 
 class Judge(StrictModel):
     model: str

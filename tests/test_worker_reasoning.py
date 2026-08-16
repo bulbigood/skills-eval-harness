@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from skills_eval_harness.cli import _agent_kwargs
 from skills_eval_harness.models import Agent, load_config
 
@@ -27,3 +29,15 @@ def test_worker_reasoning_is_passed_to_harbor_agent() -> None:
         "--ak",
         "reasoning_effort=medium",
     ]
+
+
+def test_historical_agent_without_reasoning_can_be_loaded_but_not_run() -> None:
+    profile = Agent.model_validate({
+        "harbor_name": "codex",
+        "model": "openai/test",
+        "version": "0.147.0",
+        "credential_env": "OPENAI_API_KEY",
+    })
+    assert profile.reasoning is None
+    with pytest.raises(ValueError, match="reasoning must be explicit"):
+        _agent_kwargs(profile)
