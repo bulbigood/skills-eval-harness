@@ -83,6 +83,7 @@ task_tool_output_bytes=task_output_bytes(document)
 unchanged=manifest==before
 failures=[]
 if policy["read_only"] and not unchanged: failures.append("read-only scenario modified workspace")
+if policy["mutation_expected"] and unchanged: failures.append("mutation scenario left workspace unchanged")
 hard_max=policy.get("hard_max_task_tool_calls")
 if hard_max is not None and tool_calls>hard_max: failures.append("hard tool-call maximum exceeded")
 before_by_path={row["path"]:row for row in before}
@@ -290,8 +291,16 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             hard_max = runtime_policy.get("hard_max_task_tool_calls")
             if hard_max is None and efficiency.get("task_tool_calls"):
                 hard_max = max(DEFAULT_HARD_TOOL_CALL_LIMIT, efficiency["task_tool_calls"][1])
+            mutation_expected = bool(scenario.get("mutation_expected", write_capability))
             atomic_write(task / "tests/before-tree.json", canonical_json(_tree_manifest(task / "environment/payload/workspace")))
-            atomic_write(task / "tests/policy.json", canonical_json({"read_only": not write_capability, "hard_max_task_tool_calls": hard_max}))
+            atomic_write(
+                task / "tests/policy.json",
+                canonical_json({
+                    "read_only": not write_capability,
+                    "mutation_expected": mutation_expected,
+                    "hard_max_task_tool_calls": hard_max,
+                }),
+            )
             atomic_write(
                 task / "tests/oracle.json",
                 canonical_json(_semantic_oracle(task / "environment/payload/workspace", scenario)),

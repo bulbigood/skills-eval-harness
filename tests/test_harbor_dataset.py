@@ -59,9 +59,12 @@ def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Pat
     verifier = (task / "tests/verify.py").read_text()
     assert "setup_tool_calls" in verifier
     assert "task_tool_output_bytes" in verifier
+    assert 'policy["mutation_expected"] and unchanged' in verifier
+    assert "mutation scenario left workspace unchanged" in verifier
     assert "def skill_load(action):" in verifier
     policy = json.loads((task / "tests/policy.json").read_text())
     assert policy["hard_max_task_tool_calls"] == 8
+    assert policy["mutation_expected"] is False
     before = json.loads((task / "tests/before-tree.json").read_text())
     assert all(not row["path"].startswith(".git/") for row in before)
     assert not (task / "environment/payload/workspace/.git").exists()

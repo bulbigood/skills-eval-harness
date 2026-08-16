@@ -43,6 +43,46 @@ def test_api_project_fixture_adds_project_frontmatter(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("fixture_name", "required_paths"),
+    [
+        (
+            "pkm-demo-core-write",
+            (
+                "graph/core-edit.md", "graph/core-old.md", "graph/core-source.md",
+                "graph/core-blocks.md", "graph/core-delete.md", "graph/core-body.md",
+                "graph/core-local-text.md", "graph/core-parent.md", "graph/core-child.md",
+                "graph/core-block-replace.md",
+            ),
+        ),
+        ("pkm-demo-update", ("graph/eval-roadmap.md",)),
+        ("pkm-demo-schema", (".iwe/templates/meeting.md", ".iwe/schemas/meeting.yaml")),
+        ("pkm-demo-extract-inline", ("graph/eval-plan.md",)),
+        ("pkm-demo-retry-code", ("src/retry.py", "tests/test_retry.py")),
+    ],
+)
+def test_fixture_variants_materialize_required_baselines(
+    tmp_path: Path, fixture_name: str, required_paths: tuple[str, ...]
+) -> None:
+    source = tmp_path / "source"
+    (source / "graph").mkdir(parents=True)
+    (source / ".iwe").mkdir()
+    (source / ".iwe/config.toml").write_text("[document]\n", encoding="utf-8")
+
+    destination = tmp_path / "materialized"
+    materialize_fixture(source, destination, fixture_name)
+
+    assert all((destination / path).is_file() for path in required_paths)
+
+
+def test_unknown_fixture_variant_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+
+    with pytest.raises(ValueError, match="unsupported fixture variant"):
+        materialize_fixture(source, tmp_path / "materialized", "pkm-demo-unknown")
+
+
 def test_materialized_fixture_path_is_scoped_to_sealed_root(tmp_path: Path) -> None:
     expected = tmp_path / "inputs/materialized-fixtures/pkm-demo-core-read/graph/core-beta.md"
     assert materialized_fixture_path(

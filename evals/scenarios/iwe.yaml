@@ -506,6 +506,7 @@ scenarios:
     safety: Previews the bounded attachment before applying.
 
 - id: preview-one-scoped-deletion
+  mutation_expected: false
   name: Preview one scoped deletion
   fixture: pkm-demo-core-write
   capabilities: [write.delete.key]
