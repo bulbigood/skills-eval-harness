@@ -109,7 +109,7 @@ def _materialize_core_write(root: Path) -> None:
     config = root / ".iwe/config.toml"
     config.write_text(
         config.read_text(encoding="utf-8")
-        + '\n[actions.inbox]\ntype = "attach"\ntitle = "Inbox"\nkey_template = "inbox"\n',
+        + '\n[actions.inbox]\ntype = "attach"\ntitle = "Inbox"\nkey_template = "inbox"\ndocument_template = """\n# Inbox\n\n{{content}}\n"""\n',
         encoding="utf-8",
     )
 
