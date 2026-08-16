@@ -16,7 +16,7 @@ from .hashing import (
     sha256_tree,
 )
 from .judge import Evidence, build_evidence, build_judge_messages, derive_cell_outcome, validate_verdict
-from .models import load_config, load_suite, scenario_family, validate_run_id
+from .models import AnalysisPlan, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
 from .results import CellRecord, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
 from .telemetry import validate_device_telemetry
@@ -58,6 +58,9 @@ def _verify_git_commit_tree(commit_object: Path, *, expected_commit: str, expect
 def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
     if require_seal:
         verify_run_seal(run_dir)
+    stored_summary = _load_json(run_dir / "summary.json")
+    if stored_summary.get("schema_version") != 5:
+        raise ValueError("only summary schema version 5 is supported")
     validate_device_telemetry(run_dir / "device-telemetry.json")
     manifest = _load_json(run_dir / "run-manifest.json")
     validate_run_id(manifest.get("run_id"))
@@ -331,40 +334,24 @@ def validate_run_bundle(run_dir: Path, *, require_seal: bool) -> dict:
                 raise ValueError("stored judge messages do not match sealed scenario and evidence")
         cells.append(cell)
 
-    control = next((arm["id"] for arm in arms if arm.get("role") == "control"), None)
-    treatment = next((arm["id"] for arm in arms if arm.get("role") == "treatment"), None)
-    stored_summary = _load_json(run_dir / "summary.json")
+    effective_suite = Suite.model_validate(effective)
+    expected_families = {
+        scenario_id: scenario_family(catalog[scenario_id])
+        for scenario_id in effective_suite.scenarios
+    }
     recomputed = summarize_cells(
         cells,
         expected_identities,
-        expected_families={
-            scenario_id: scenario_family(catalog[scenario_id])
-            for scenario_id in manifest["suite"]["scenarios"]
-        },
-        control_arm=control,
-        treatment_arm=treatment,
+        expected_families=expected_families,
+        analysis=AnalysisPlan.from_suite(
+            effective_suite, families=expected_families, samples=samples
+        ),
         pipeline_elapsed_seconds=stored_summary.get("timing", {}).get("pipeline_elapsed_seconds"),
         run_purpose=manifest["run_purpose"],
         samples_per_identity=samples,
         preregistered_samples=manifest["suite"]["default_samples"],
     )
-    if stored_summary.get("schema_version") == 3:
-        if has_judge_concurrency:
-            raise ValueError("current bundles cannot downgrade to summary schema 3")
-        # Historical bundles predate explicit tested-scenario outcome fields.
-        recomputed["schema_version"] = 3
-        recomputed.pop("acceptance")
-        recomputed["pass"] = recomputed["valid"] and all(cell["required_pass"] for cell in recomputed["cells"])
-        recomputed["reliability"].pop("scenario_failures_by_arm", None)
-        for cell in recomputed["cells"]:
-            cell.pop("scenario_outcome", None)
-            cell.pop("scenario_failures", None)
-    elif stored_summary.get("schema_version") == 4 and has_judge_concurrency:
-        # Historical bundles predate dimension-level sample pass-rate acceptance.
-        recomputed["schema_version"] = 4
-        recomputed.pop("acceptance")
-        recomputed["pass"] = recomputed["valid"] and all(cell["required_pass"] for cell in recomputed["cells"])
-    elif stored_summary.get("schema_version") != 5 or not has_judge_concurrency:
+    if not has_judge_concurrency:
         raise ValueError("summary schema does not match the sealed execution generation")
     if canonical_json(recomputed) != canonical_json(stored_summary):
         raise ValueError("summary does not recompute from sealed cells")

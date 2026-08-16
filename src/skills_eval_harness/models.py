@@ -62,6 +62,37 @@ class Suite(StrictModel):
             raise ValueError("absolute suite arm must not declare a paired role")
         return self
 
+class AnalysisPlan(StrictModel):
+    """Authoritative analysis semantics derived from the validated effective suite."""
+
+    kind: Literal["absolute", "paired"]
+    arms: tuple[str, ...]
+    roles: dict[str, Literal["control", "treatment"] | None]
+    scenarios: tuple[str, ...]
+    families: dict[str, str]
+    samples: int = Field(ge=1)
+
+    @classmethod
+    def from_suite(cls, suite: Suite, *, families: dict[str, str], samples: int) -> "AnalysisPlan":
+        if set(families) != set(suite.scenarios):
+            raise ValueError("analysis families must cover the effective suite scenarios")
+        return cls(
+            kind=suite.kind,
+            arms=tuple(arm.id for arm in suite.arms),
+            roles={arm.id: arm.role for arm in suite.arms},
+            scenarios=tuple(suite.scenarios),
+            families=dict(families),
+            samples=samples,
+        )
+
+    @property
+    def control_arm(self) -> str | None:
+        return next((arm for arm, role in self.roles.items() if role == "control"), None)
+
+    @property
+    def treatment_arm(self) -> str | None:
+        return next((arm for arm, role in self.roles.items() if role == "treatment"), None)
+
 class Container(StrictModel):
     image: str
     agent_image: str
@@ -79,7 +110,7 @@ class Agent(StrictModel):
     model: str
     version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
     credential_env: Literal["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
-    reasoning: Literal["low", "medium", "high"] | None = None
+    reasoning: Literal["low", "medium", "high"]
 
 class Judge(StrictModel):
     model: str

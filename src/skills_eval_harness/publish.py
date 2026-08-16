@@ -3,19 +3,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-import yaml
-
 from .bundle import validate_run_bundle
 from .hashing import atomic_write, sha256_bytes
 from .models import validate_run_id
 from .provenance import Provenance
-from .reporting import render_human_sections
+from .report_models import ReportContext
+from .reporting import render_report
 from .telemetry import validate_device_telemetry
 
 
@@ -35,22 +33,6 @@ def canonical_repository(root: Path) -> str:
     if not url.startswith("https://github.com/"):
         raise ValueError("publication repository must be a GitHub HTTPS or SSH URL")
     return url
-
-
-def _skill_metadata(run_dir: Path) -> dict[str, str]:
-    skill_file = run_dir / "inputs/selected-skill/SKILL.md"
-    text = skill_file.read_text(encoding="utf-8")
-    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
-        raise ValueError("selected skill must have YAML frontmatter")
-    frontmatter = yaml.safe_load(text.split("\n---\n", 1)[0][4:])
-    if not isinstance(frontmatter, dict):
-        raise ValueError("selected skill frontmatter must be an object")
-    name = frontmatter.get("name")
-    metadata = frontmatter.get("metadata", {})
-    version = metadata.get("version") if isinstance(metadata, dict) else None
-    if not isinstance(name, str) or not name or not isinstance(version, str) or not version:
-        raise ValueError("selected skill frontmatter requires string name and version")
-    return {"name": name, "version": version}
 
 
 def _sealed_paths(run_dir: Path) -> tuple[Path, ...]:
@@ -133,7 +115,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
     ):
         raise ValueError("publication requires complete healthy schema-v2 telemetry")
     manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
-    run_id = validate_run_id(manifest.get("run_id"))
+    validate_run_id(manifest.get("run_id"))
     provenance = Provenance.model_validate_json(
         (run_dir / "provenance.json").read_text(encoding="utf-8")
     ).validated()
@@ -194,59 +176,11 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
         })
     telemetry_json = json.dumps(telemetry_summary, ensure_ascii=False, sort_keys=True, indent=2)
-    suite_kind = manifest.get("suite", {}).get("kind", "single")
-    context: dict[str, object] = {"suite_kind": suite_kind}
-    if suite_kind == "paired":
-        skill_metadata = _skill_metadata(run_dir)
-        frozen_config = yaml.safe_load((run_dir / "inputs/config.yaml").read_text(encoding="utf-8"))
-        agent_config = frozen_config.get("agents", {}).get(manifest["agent"], {})
-        context.update({
-            "skill_name": skill_metadata["name"],
-            "skill_version": skill_metadata["version"],
-            "skill_url": provenance.source_url,
-            "skill_source_commit": provenance.source_commit,
-            "skill_sha256": provenance.selected_skill_sha256,
-            "agent_name": manifest["agent"],
-            "agent_version": manifest["agent_version"],
-            "agent_model": agent_config.get("model", "unknown"),
-            "worker_reasoning": agent_config.get(
-                "reasoning", "unset in sealed configuration; effective value unknown and not independently reproducible"
-            ),
-            "judge_model": frozen_config.get("judge", {}).get("model", "not recorded"),
-            "judge_reasoning": frozen_config.get("judge", {}).get(
-                "reasoning", "not recorded"
-            ),
-            "runtime_name": "IWE",
-            "runtime_version": provenance.runtime_version,
-            "runtime_sha256": provenance.runtime_sha256,
-            "agent_image_sha256": provenance.image_digests["agent"],
-        })
-    human_sections = render_human_sections(summary, context=context)
-    evidence_line = (
-        f"- Sealed evidence: [`{evidence_dir.name}`]({evidence_dir.name}/run-seal.json)\n"
-        if include_evidence
-        else ""
+    context = ReportContext.from_validated_bundle(
+        run_dir, summary=summary, output=output, repository=repository,
+        include_evidence=include_evidence,
     )
-    suite_verdict_line = (
-        "" if suite_kind == "paired"
-        else f"- Overall suite verdict: **{'PASS' if summary.get('pass') is True else 'FAIL'}**\n"
-    )
-    revision_match = re.search(r"-v(\d+)$", output.stem)
-    report_revision = f"v{revision_match.group(1)}" if revision_match else "unversioned"
-    report = f"""# Evaluation report
-
-- Run ID: `{run_id}`
-- Report revision: `{report_revision}`
-{suite_verdict_line}- Evaluation harness repository: [{repository}]({repository})
-- Evaluation harness commit used for this run: [`{provenance.harness_commit}`]({repository}/commit/{provenance.harness_commit})
-- Agent image SHA-256: `{provenance.image_digests['agent']}`
-- Node version: `{manifest['node_version']}`
-- Harbor version: `{provenance.harbor_version}`
-- Complete cells: `{summary['observed_cells']}` / `{summary['expected_cells']}`
-{evidence_line}
-
-{human_sections}
-
+    report = render_report(context) + f"""
 ## Sanitized device telemetry
 
 <details>

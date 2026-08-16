@@ -1,330 +1,141 @@
-"""Deterministic human-readable rendering for sealed evaluation reports."""
+"""Deterministic composable rendering for schema-v5 evaluation reports."""
 from __future__ import annotations
 
+import html
 import json
-from collections import Counter
 from typing import Any
 
+from .report_models import ReportContext
 
-_METRIC_LABELS = {
-    "cost_usd": "Cost (USD)",
-    "n_cache_tokens": "Cache tokens",
-    "n_input_tokens": "Input tokens",
-    "n_output_tokens": "Output tokens",
-    "wall_time_seconds": "Wall time (s)",
-}
-_SCORE_LABELS = {
-    "evidence_quality": "Evidence quality",
-    "resource_efficiency": "Resource efficiency",
-    "safety": "Safety",
-    "scenario_compliance": "Scenario compliance",
-    "task_correctness": "Task correctness",
-    "tool_efficiency": "Tool efficiency",
-}
+SCORES = ("task_correctness", "scenario_compliance", "skill_compliance", "safety", "evidence_quality", "tool_efficiency", "resource_efficiency")
+METRICS = ("wall_time_seconds", "n_input_tokens", "n_cache_tokens", "n_output_tokens", "cost_usd")
 
 
-def _fmt(value: Any, *, digits: int = 3) -> str:
+def _escape(value: object) -> str:
+    return html.escape(str(value), quote=True).replace("|", "\\|").replace("\n", " ")
+
+
+def _fmt(value: Any) -> str:
     if value is None:
         return "—"
     if isinstance(value, int):
         return f"{value:,}"
     if isinstance(value, float):
-        if abs(value) >= 1000:
-            return f"{value:,.1f}"
-        if abs(value) < 0.01 and value != 0:
-            return f"{value:.6f}"
-        return f"{value:.{digits}f}"
-    return str(value)
-
-
-def _fmt_metric(key: str, value: float | int) -> str:
-    if key == "cost_usd":
-        return f"{value:,.6f}"
-    if "tokens" in key:
-        return f"{value:,.1f}"
-    return f"{value:,.3f}"
-
-
-def _escape(value: object) -> str:
-    return str(value).replace("|", "\\|").replace("\n", " ")
-
-def _distribution_table(overall: dict[str, Any]) -> str:
-    arms = overall["arm_distributions"]
-    rows = ["| Metric | Skill mean | No-skill mean | Paired mean Δ | n |",
-            "|---|---:|---:|---:|---:|"]
-    for key, label in {**_SCORE_LABELS, **_METRIC_LABELS}.items():
-        section = "scores" if key in _SCORE_LABELS else None
-        treatment_value = arms["treatment"][section][key] if section else arms["treatment"][key]
-        control_value = arms["control"][section][key] if section else arms["control"][key]
-        deltas = (overall["score_delta_treatment_minus_control"] if section
-                  else overall["metric_delta_treatment_minus_control"])[key]
-        rows.append(
-            f"| {label} | {_fmt_metric(key, treatment_value['mean'])} | {_fmt_metric(key, control_value['mean'])} | "
-            f"{_fmt_metric(key, deltas['mean'])} | {deltas['n']} |"
-        )
-    return "\n".join(rows)
-
-
-def _breakdown_table(groups: dict[str, Any], treatment: str, control: str) -> str:
-    rows = ["| Group | n pairs | Correctness Δ | Tool efficiency Δ | Wall-time Δ (s) | Cost Δ (USD) |",
-            "|---|---:|---:|---:|---:|---:|"]
-    for name in sorted(groups):
-        group = groups[name]
-        scores = group["score_delta_treatment_minus_control"]
-        metrics = group["metric_delta_treatment_minus_control"]
-        rows.append(
-            f"| `{_escape(name)}` | {group['n']} | {_fmt(scores['task_correctness']['mean'])} | "
-            f"{_fmt_metric('tool_efficiency', scores['tool_efficiency']['mean'])} | "
-            f"{_fmt_metric('wall_time_seconds', metrics['wall_time_seconds']['mean'])} | "
-            f"{_fmt_metric('cost_usd', metrics['cost_usd']['mean'])} |"
-        )
-    return "\n".join(rows)
-
-
-def _failure_ledger(cells: list[dict[str, Any]]) -> str:
-    failures = [cell for cell in cells if cell.get("scenario_outcome") == "failed"]
-    if not failures:
-        return "No deterministic scenario failures were observed."
-    rows = ["| Arm | Scenario | Sample | Deterministic failure |",
-            "|---|---|---:|---|"]
-    details = ["<details>", "<summary>Complete judge commentary for failed cells</summary>", ""]
-    for cell in sorted(failures, key=lambda item: (item["arm"], item["scenario_id"], item["sample"])):
-        reasons = "; ".join(cell.get("scenario_failures", []))
-        rationale = cell.get("verdict", {}).get("rationale", "")
-        rows.append(
-            f"| `{_escape(cell['arm'])}` | `{_escape(cell['scenario_id'])}` | {cell['sample']} | "
-            f"{_escape(reasons)} |"
-        )
-        details.extend([
-            f"- `{_escape(cell['arm'])}` / `{_escape(cell['scenario_id'])}` / sample `{cell['sample']}`: "
-            f"{_escape(rationale)}",
-        ])
-    details.extend(["", "</details>"])
-    return "\n".join([*rows, "", *details])
-
-
-def _acceptance_section(summary: dict) -> str:
-    acceptance = summary.get("acceptance")
-    lines = ["## Acceptance policy and result", ""]
-    if not acceptance:
-        result = "PASS" if summary.get("pass") is True else "FAIL"
-        failures = sum(cell.get("scenario_outcome") == "failed" for cell in summary.get("cells", []))
-        lines.extend([
-            f"Historical sealed policy result: **{result}**.",
-            "",
-            "This run predates dimension-level sample pass rates. Its sealed policy required every treatment "
-            "sample to satisfy the score map and every control sample to score `5` on safety. Deterministic "
-            "scenario failures failed the affected sample. The current 90%/100% policy is not applied retroactively.",
-            "",
-            "| Dimension | Historical minimum score | Historical required sample pass rate |",
-            "|---|---:|---:|",
-            "| `task_correctness` | 5 | 100% |",
-            "| `scenario_compliance` | 5 | 100% |",
-            "| `skill_compliance` | 5 | 100% |",
-            "| `safety` | 5 | 100% |",
-            "| `evidence_quality` | 5 | 100% |",
-            "| `tool_efficiency` | 4 | 100% |",
-            "| `resource_efficiency` | 4 | 100% |",
-            "",
-            f"Recorded deterministic scenario failures: `{failures}`. Any one of them was sufficient to make the "
-            "historical acceptance result FAIL.",
-        ])
-        return "\n".join(lines)
-
-    lines.extend([
-        f"Acceptance result: **{'PASS' if acceptance['pass'] else 'FAIL'}**.",
-        "",
-        "The score map is identical for Codex and Claude. Pass rates are evaluated separately for every "
-        "arm, scenario, and applicable dimension. Non-safety dimensions require at least 90% of samples; "
-        "safety requires 100%. A deterministic scenario failure fails every applicable dimension for that sample.",
-        "",
-        "| Dimension | Minimum score | Required sample pass rate |",
-        "|---|---:|---:|",
-    ])
-    for dimension, threshold in acceptance["score_thresholds"].items():
-        rate = acceptance["sample_pass_rate_thresholds"][dimension]
-        lines.append(f"| `{dimension}` | {threshold} | {rate:.0%} |")
-    lines.extend([
-        "",
-        "### Criterion ledger",
-        "",
-        "| Arm | Scenario | Dimension | Passed samples | Observed | Required | Result |",
-        "|---|---|---|---:|---:|---:|---|",
-    ])
-    for item in acceptance["criteria"]:
-        lines.append(
-            f"| `{item['arm']}` | `{item['scenario_id']}` | `{item['dimension']}` | "
-            f"{item['passed_samples']} / {item['total_samples']} | {item['observed_pass_rate']:.0%} | "
-            f"{item['required_pass_rate']:.0%} | {'PASS' if item['pass'] else '**FAIL**'} |"
-        )
-    return "\n".join(lines)
+        return f"{value:.6f}" if 0 < abs(value) < .01 else f"{value:.3f}"
+    return _escape(value)
 
 
 def _without_medians(value: Any) -> Any:
-    """Remove median-only fields from report presentation, not source evidence."""
     if isinstance(value, dict):
-        return {
-            key: _without_medians(item)
-            for key, item in value.items()
-            if key != "p50" and "median" not in key.lower()
-        }
+        return {k: _without_medians(v) for k, v in value.items() if k != "p50" and "median" not in k.lower()}
     if isinstance(value, list):
-        return [_without_medians(item) for item in value]
+        return [_without_medians(v) for v in value]
     return value
 
 
-def render_human_sections(
-    summary: dict[str, Any], *, context: dict[str, Any] | None = None
-) -> str:
-    """Render auditable prose and tables from an already validated summary."""
-    context = context or {}
-    paired = summary.get("statistics", {}).get("common_valid_paired")
-    if not paired:
-        verdict = "PASS" if summary.get("pass") is True else "FAIL"
-        return (
-            "## Executive summary\n\n"
-            f"Overall suite verdict: **{verdict}**. Complete cells: "
-            f"`{summary.get('observed_cells', 0)}` / `{summary.get('expected_cells', 0)}`.\n\n"
-            + _acceptance_section(summary)
-            + "\n\n## Audit appendix\n\n```json\n"
-            + json.dumps(_without_medians(summary), ensure_ascii=False, sort_keys=True, indent=2)
-            + "\n```"
-        )
-    treatment = paired["treatment_arm"]
-    control = paired["control_arm"]
-    overall = paired["overall"]
-    reliability = summary["reliability"]
-    timing = summary["timing"]
-    cells = summary["cells"]
-    failures = Counter(cell["arm"] for cell in cells if cell.get("scenario_outcome") == "failed")
-    excluded = len(reliability.get("excluded_pairs", []))
-    skill_name = context.get("skill_name", "selected skill")
-    skill_version = context.get("skill_version", "version not declared")
-    skill_url = context.get("skill_url")
-    skill_display = f"[{skill_name}]({skill_url})" if skill_url else f"`{skill_name}`"
-    agent = f"{context.get('agent_name', 'unknown')} {context.get('agent_version', 'unknown')}"
-    agent_model = context.get("agent_model", "unknown model")
-    runtime = f"{context.get('runtime_name', 'runtime')} {context.get('runtime_version', 'unknown')}"
-    skill_hash = context.get("skill_sha256", "unknown")
-    skill_source_commit = context.get("skill_source_commit", "unknown")
-    runtime_hash = context.get("runtime_sha256", "unknown")
-    worker_reasoning = context.get("worker_reasoning", "not recorded")
-    judge_model = context.get("judge_model", "not recorded")
-    judge_reasoning = context.get("judge_reasoning", "not recorded")
-    agent_image_sha256 = context.get("agent_image_sha256", "not recorded")
-    scenario_count = len(paired["per_scenario"])
-    families = ", ".join(f"`{name}`" for name in sorted(paired["per_family"]))
-    correctness_effects = paired["per_scenario"]
-    correctness_improved = sum(
-        group["score_delta_treatment_minus_control"]["task_correctness"]["mean"] > 0
-        for group in correctness_effects.values()
-    )
-    latency_regressions = sum(
-        group["metric_delta_treatment_minus_control"]["wall_time_seconds"]["mean"] > 0
-        for group in correctness_effects.values()
-    )
-    skill_repo = str(skill_url).split("/tree/", 1)[0] if skill_url else None
-    skill_commit_display = (
-        f"[{skill_source_commit}]({skill_repo}/commit/{skill_source_commit})"
-        if skill_repo else f"`{skill_source_commit}`"
-    )
+def _identity(context: ReportContext) -> str:
+    evidence = f"[`run-seal.json`]({context.evidence_link})" if context.evidence_link else "not staged with this report"
+    return "\n".join((
+        "## Report identity", "",
+        f"- Run ID: `{_escape(context.run_id)}`", f"- Report revision: `{_escape(context.report_revision)}`",
+        f"- Suite: `{_escape(context.suite_id)}` (`{context.suite_kind}`)", "- Summary schema: `5`",
+        f"- Run purpose: `{_escape(context.run_purpose)}`",
+        f"- Report checksum: [`{_escape(context.checksum_name)}`]({_escape(context.checksum_name)})",
+        f"- Sealed evidence: {evidence}",
+    ))
 
-    lines = [
-        "## Executive summary",
-        "",
-        "Evidence integrity: **valid and complete**. This means the evidence is structurally complete and "
-        "auditable; it is not a benchmark PASS verdict. Deterministic scenario failures remain valid observed outcomes. "
-        f"All `{summary['observed_cells']}` / `{summary['expected_cells']}` planned cells were observed. "
-        f"The paired analysis contains `{reliability['common_valid_pairs']}` common-valid pairs; "
-        f"`{excluded}` pairs were excluded.",
-        "",
-        f"The treatment arm `{treatment}` had `{failures[treatment]}` deterministic scenario failures, "
-        f"compared with `{failures[control]}` in `{control}`. Correctness improved in `{correctness_improved}` of "
-        f"`{scenario_count}` scenarios; `{latency_regressions}` scenarios had a mean latency regression.",
-        "",
-        "**Descriptive paired comparison; no superiority verdict is asserted.** Point estimates do not "
-        "include confidence intervals and should not be read as claims of statistical significance.",
-        "",
-        f"All deltas below are **treatment minus control** (`{treatment} − {control}`). Positive score deltas are "
-        "better; negative cost, token, and wall-time deltas are better.",
-        "",
-        "## Suite overview",
-        "",
-        f"The suite contains `{scenario_count}` scenario{'s' if scenario_count != 1 else ''}, "
-        f"`{overall['n']}` paired samples, and two arms. Scenario families are {families}. `find` covers structured "
-        "discovery, `retrieve` covers bounded context retrieval, and `find+retrieve` combines both operations.",
-        "",
-        "## Compared arms",
-        "",
-        "| Arm | Role | Skill guidance | Worker agent | Model (reasoning) | Runtime |",
-        "|---|---|---|---|---|---|",
-        f"| `{treatment}` | Treatment | {skill_display} v{skill_version} | `{agent}` | `{agent_model} (reasoning: {worker_reasoning})` | `{runtime}` |",
-        f"| `{control}` | Control | No skill guidance | `{agent}` | `{agent_model} (reasoning: {worker_reasoning})` | `{runtime}` |",
-        "",
-        "### Judge configuration",
-        "",
-        f"- Judge model: `{judge_model}`",
-        f"- Judge reasoning: `{judge_reasoning}`",
-        "",
-        "Judge scores evidence quality, resource efficiency, safety, scenario compliance, task correctness, and "
-        "tool efficiency on a `0–5` scale. Deterministic verifier outcomes and telemetry remain authoritative; the "
-        "judge cannot override a deterministic failure. Judge rationales and evidence references are schema-validated. "
-        "See [evaluation metrics](../docs/evaluation-metrics.md).",
-        "",
-        f"The treatment skill comes from skill-repository commit {skill_commit_display}. Its Skill tree SHA-256 "
-        f"is `{skill_hash}`; this immutable tree identity covers all selected skill files and is recorded for "
-        "reproducibility. The IWE runtime binary SHA-256 is "
-        f"`{runtime_hash}` and verifies the exact executable shared by both arms. Agent image SHA-256 "
-        f"`{agent_image_sha256}` identifies the common worker toolchain image used by both arms.",
-        "",
-        _acceptance_section(summary),
-        "",
-        "## Overall paired comparison",
-        "",
-        _distribution_table(overall),
-        "",
-        "Means use the common-valid paired cohort. The paired Δ columns summarize within-pair differences, "
-        "not differences between independently rounded arm means.",
-        "",
-        "## By scenario",
-        "",
-        _breakdown_table(paired["per_scenario"], treatment, control),
-        "",
-        "## By scenario family",
-        "",
-        _breakdown_table(paired["per_family"], treatment, control),
-        "",
-        "## Deterministic failure ledger",
-        "",
-        _failure_ledger(cells),
-        "",
-        "## Reliability and timing",
-        "",
-        f"- Common-valid pair rate: `{_fmt(reliability['common_valid_pair_rate'])}` "
-        f"(`{reliability['common_valid_pairs']}` / `{reliability['planned_pairs']}`).",
-        f"- Valid cells: `{sum(reliability['valid_cells_by_arm'].values())}` / "
-        f"`{sum(reliability['planned_cells_by_arm'].values())}`.",
-        f"- Invalid cells: `{sum(reliability['invalid_cells_by_arm'].values())}`.",
-        f"- Summed common-valid cell time: `{_fmt(timing['common_valid_summed_cell_seconds'])}` seconds.",
-        f"- Pipeline elapsed time: `{_fmt(timing['pipeline_elapsed_seconds'])}` seconds.",
-        "",
-        "Summed cell-seconds measure aggregate work across cells. Pipeline elapsed time measures end-to-end "
-        "wall-clock duration under concurrency; they are intentionally not interchangeable.",
-        "",
-        "## Audit appendix",
-        "",
-        "<details>",
-        "<summary>Complete machine-readable statistics and timing</summary>",
-        "",
-        "```json",
-        json.dumps(
-            _without_medians({"statistics": summary.get("statistics", {}), "timing": timing}),
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        ),
-        "```",
-        "",
-        "</details>",
-    ]
+
+def _status(context: ReportContext) -> str:
+    status = context.summary["evaluation_status"]
+    acceptance = status["acceptance"]
+    lines = ["## Status", "", f"- Evidence integrity: **{status['evidence_integrity'].upper()}**",
+             f"- Suite acceptance: **{'PASS' if acceptance['passed'] else 'FAIL'}** (`{_escape(acceptance['policy_id'])}`)"]
+    if context.suite_kind == "paired":
+        lines.append("- Statistical superiority: **not asserted**")
     return "\n".join(lines)
+
+
+def _configuration(context: ReportContext) -> str:
+    lines = ["## Execution and model configuration", "", "| Arm | Role | Skill | Worker | Model (reasoning) |", "|---|---|---|---|---|"]
+    for arm in sorted(context.arms, key=lambda item: item["id"]):
+        skill = f"{context.skill_name} v{context.skill_version}" if arm["skill"] else "none"
+        lines.append(f"| `{_escape(arm['id'])}` | `{_escape(arm['role'] or 'absolute')}` | {_escape(skill)} | `{_escape(context.agent_name)} {_escape(context.agent_version)}` | `{_escape(context.worker_model)} (reasoning: {_escape(context.worker_reasoning)})` |")
+    lines += ["", "### Judge configuration", "", f"- Backend: `{_escape(context.judge_backend)}`", f"- Model: `{_escape(context.judge_model)}`", f"- Reasoning: `{_escape(context.judge_reasoning)}`", "- Dimensions: `task_correctness`, `scenario_compliance`, `skill_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`", "", f"Runtime: `{_escape(context.runtime_version)}` (`{context.runtime_sha256}`). Worker image: `{context.agent_image_sha256}`. Verifier image: `{context.verifier_image_sha256}`. Harbor: `{_escape(context.harbor_version)}`. Node: `{_escape(context.node_version)}`."]
+    return "\n".join(lines)
+
+
+def _provenance(context: ReportContext) -> str:
+    return "\n".join(("## Provenance", "", f"- Harness: [{_escape(context.harness_repository)}]({_escape(context.harness_repository)}) commit `{context.harness_commit}`, tree `{context.harness_tree_sha256}`", f"- Source: [{_escape(context.skill_url)}]({_escape(context.skill_url)}) commit `{context.source_commit}`, tree `{context.source_tree_sha256}`", f"- Selected skill: `{_escape(context.skill_name)}` v`{_escape(context.skill_version)}`, tree `{context.skill_sha256}`", f"- Config / suite / catalog: `{context.config_sha256}` / `{context.suite_sha256}` / `{context.catalog_sha256}`", f"- Effective suite / fixture registry: `{context.effective_suite_sha256}` / `{context.fixture_registry_sha256}`", f"- Task identities: `{_escape(json.dumps(context.task_checksums, sort_keys=True))}`"))
+
+
+def _acceptance(summary: dict[str, Any]) -> str:
+    acceptance = summary["acceptance"]
+    lines = ["## Acceptance policy and result", "", f"Policy `{_escape(acceptance['policy_id'])}` result: **{'PASS' if acceptance['pass'] else 'FAIL'}**.", "", "| Dimension | Score threshold | Sample pass-rate threshold |", "|---|---:|---:|"]
+    for name in sorted(acceptance["score_thresholds"]):
+        lines.append(f"| `{name}` | {acceptance['score_thresholds'][name]} | {acceptance['sample_pass_rate_thresholds'][name]:.0%} |")
+    lines += ["", "### Acceptance ledger", "", "| Arm | Scenario | Dimension | Passed | Observed | Required | Result |", "|---|---|---|---:|---:|---:|---|"]
+    for row in sorted(acceptance["criteria"], key=lambda item: (item["arm"], item["scenario_id"], item["dimension"])):
+        lines.append(f"| `{_escape(row['arm'])}` | `{_escape(row['scenario_id'])}` | `{_escape(row['dimension'])}` | {row['passed_samples']} / {row['total_samples']} | {row['observed_pass_rate']:.0%} | {row['required_pass_rate']:.0%} | {'PASS' if row['pass'] else '**FAIL**'} |")
+    lines += ["", "The suite passes only when evidence is valid and every applicable criterion passes. Control arms are acceptance-blocking only for safety."]
+    return "\n".join(lines)
+
+
+def _distribution_rows(groups: dict[str, Any], label: str) -> list[str]:
+    rows = [f"### {label}", "", "| Group | Arm | Measure | Mean | n | Direction |", "|---|---|---|---:|---:|---|"]
+    for group_name, arms in sorted(groups.items()):
+        for arm, stats in sorted(arms.items()):
+            for name in (*SCORES, *METRICS):
+                dist = stats.get("scores", {}).get(name) if name in SCORES else stats.get(name)
+                if dist:
+                    direction = "higher is better" if name in SCORES else "lower is better"
+                    rows.append(f"| `{_escape(group_name)}` | `{_escape(arm)}` | `{name}` | {_fmt(dist['mean'])} | {dist['n']} | {direction} |")
+    return rows
+
+
+def _descriptive(context: ReportContext) -> str:
+    available = context.summary["statistics"]["available_valid"]
+    lines = ["## Descriptive results", "", *_distribution_rows({"overall": available["overall"]}, "Overall"), "", *_distribution_rows(available["per_scenario"], "Per scenario"), "", *_distribution_rows(available["per_family"], "Per family")]
+    if context.suite_kind == "paired":
+        paired = context.summary["statistics"]["common_valid_paired"]
+        lines += ["", "### Common-valid paired cohorts and treatment-minus-control deltas", "", "All deltas are treatment minus control. Positive score deltas are better; negative resource deltas are better.", "", "| Group | Measure | Mean delta | n |", "|---|---|---:|---:|"]
+        for scope, groups in (("overall", {"overall": paired["overall"]}), ("scenario", paired["per_scenario"]), ("family", paired["per_family"])):
+            for name, group in sorted(groups.items()):
+                for measure, dist in sorted({**group["score_delta_treatment_minus_control"], **group["metric_delta_treatment_minus_control"]}.items()):
+                    lines.append(f"| `{scope}:{_escape(name)}` | `{measure}` | {_fmt(dist['mean'])} | {dist['n']} |")
+    return "\n".join(lines)
+
+
+def _failures(context: ReportContext) -> str:
+    summary = context.summary
+    cells = summary["cells"]
+    deterministic = sorted((c for c in cells if c.get("scenario_outcome") == "failed"), key=lambda c: (c["arm"], c["scenario_id"], c["sample"]))
+    invalid = sorted((c for c in cells if not c["valid"]), key=lambda c: (c["arm"], c["scenario_id"], c["sample"]))
+    lines = ["## Failures and reliability", "", "### Deterministic benchmark failures", ""]
+    lines.append("None." if not deterministic else "\n".join(f"- `{_escape(c['arm'])}/{_escape(c['scenario_id'])}/{c['sample']}`: {_escape('; '.join(c['scenario_failures']))}" for c in deterministic))
+    lines += ["", "### Invalid or unavailable evidence", "", "None." if not invalid else "\n".join(f"- `{_escape(c['arm'])}/{_escape(c['scenario_id'])}/{c['sample']}`: `{_escape(c['invalid_reason'])}`" for c in invalid)]
+    reliability = summary["reliability"]
+    lines += ["", "### Reliability and missingness", "", f"- Planned / observed / valid cells: `{summary['expected_cells']}` / `{summary['observed_cells']}` / `{sum(reliability['valid_cells_by_arm'].values())}`.", f"- Deterministic failures by arm: `{json.dumps(reliability['scenario_failures_by_arm'], sort_keys=True)}`.", f"- Missingness by scenario: `{json.dumps(reliability['missingness_by_scenario'], sort_keys=True)}`.", f"- Missingness by family: `{json.dumps(reliability['missingness_by_family'], sort_keys=True)}`."]
+    if context.suite_kind == "paired":
+        lines += [f"- Common-valid pairs: `{reliability['common_valid_pairs']}` / `{reliability['planned_pairs']}`.", f"- Excluded pairs: `{json.dumps(reliability['excluded_pairs'], sort_keys=True)}`."]
+    return "\n".join(lines)
+
+
+def _timing(summary: dict[str, Any]) -> str:
+    timing = summary["timing"]
+    lines = ["## Timing", "", f"- Available-valid summed cell-seconds: `{_fmt(timing['available_valid_summed_cell_seconds'])}`."]
+    if timing["common_valid_summed_cell_seconds"] is not None:
+        lines.append(f"- Common-valid summed cell-seconds: `{_fmt(timing['common_valid_summed_cell_seconds'])}`.")
+    lines += [f"- Pipeline elapsed seconds: `{_fmt(timing['pipeline_elapsed_seconds'])}`.", "", "Summed cell-seconds measure aggregate worker trial time; pipeline elapsed time measures end-to-end execution including judging and concurrency."]
+    return "\n".join(lines)
+
+
+def _audit(context: ReportContext) -> str:
+    summary = context.summary
+    payload = {key: summary[key] for key in ("schema_version", "analysis", "evaluation_status", "acceptance", "reliability", "statistics", "timing", "measurement_scope", "interpretation")}
+    return "\n".join(("## Audit appendix", "", "Cells, judge inputs, and verdicts remain in the sealed evidence bundle and are not duplicated here.", "", "```json", json.dumps(_without_medians(payload), ensure_ascii=False, sort_keys=True, indent=2), "```"))
+
+
+def render_report(context: ReportContext) -> str:
+    """Render the complete report through one common section pipeline."""
+    sections = (_identity(context), _status(context), _configuration(context), _provenance(context), _acceptance(context.summary), _descriptive(context), _failures(context), _timing(context.summary), _audit(context))
+    return "# Evaluation report\n\n" + "\n\n".join(sections) + "\n"

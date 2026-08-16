@@ -19,6 +19,8 @@ The Harbor evaluator uses seven `0..5` dimensions:
 
 The evaluator has no compatibility path for the former TOML configuration or host subprocess runner.
 
+Summary schema v5 is the sole report and validation contract. Schema v3 and v4 summaries are rejected without compatibility conversion or historical rendering.
+
 ## Deterministic verification
 
 Harbor runs the verifier in a separate container with no network. It validates the ATIF trajectory, rejects escaping symlinks, hashes the resulting workspace, checks read-only invariants, and applies a bounded hard tool-call safety ceiling. The narrower scenario efficiency range remains judge evidence rather than an infrastructure-failure threshold. A true mechanical failure cannot be overridden by the model judge.
@@ -46,3 +48,7 @@ Codex and Claude use the same score thresholds: `tool_efficiency >= 4`, `resourc
 ## Statistics
 
 Sealed summaries include overall, per-scenario, and per-family distributions for scores and wall time: `n`, mean, sample standard deviation, and p05/p25/p50/p75/p95. Paired suites additionally retain treatment-minus-control score and wall-time deltas on the common-valid pair cohort. Public reports use means and mean paired deltas; median/p50 fields remain sealed but are intentionally omitted from the current publication format. Summed cell-seconds and end-to-end pipeline elapsed time are reported separately.
+
+## Report contract
+
+Both suite kinds render identity and status, arm and worker configuration, separate judge configuration, provenance, the complete acceptance ledger, overall/per-scenario/per-family descriptive results, deterministic failures and invalidity, reliability/missingness, timing, and a common audit appendix. Paired reports additionally render common-valid cohorts, treatment-minus-control deltas, excluded pairs, and state that statistical superiority is not asserted. The checksum sidecar is linked; sealed evidence is linked when staged and otherwise identified as unavailable with the report.

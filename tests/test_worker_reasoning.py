@@ -31,13 +31,11 @@ def test_worker_reasoning_is_passed_to_harbor_agent() -> None:
     ]
 
 
-def test_historical_agent_without_reasoning_can_be_loaded_but_not_run() -> None:
-    profile = Agent.model_validate({
-        "harbor_name": "codex",
-        "model": "openai/test",
-        "version": "0.147.0",
-        "credential_env": "OPENAI_API_KEY",
-    })
-    assert profile.reasoning is None
-    with pytest.raises(ValueError, match="reasoning must be explicit"):
-        _agent_kwargs(profile)
+def test_agent_without_reasoning_fails_current_config_validation() -> None:
+    with pytest.raises(ValueError, match="reasoning"):
+        Agent.model_validate({
+            "harbor_name": "codex",
+            "model": "openai/test",
+            "version": "0.147.0",
+            "credential_env": "OPENAI_API_KEY",
+        })

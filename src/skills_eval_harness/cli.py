@@ -35,7 +35,7 @@ from .hashing import (
 )
 from .judge import build_evidence, build_judge_messages, derive_cell_outcome
 from .judge_client import judge_cell
-from .models import Agent, HarnessConfig, load_config, load_suite, scenario_family, validate_run_id
+from .models import AnalysisPlan, Agent, HarnessConfig, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
 from .security import (
@@ -668,8 +668,7 @@ def _execute_run(
             assert cell is not None
             cells.append(cell)
             atomic_write_json(run_root / "cells" / f"{arm['id']}--{scenario_id}--{sample}.json", cell)
-        control_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "control"), None)
-        treatment_arm = next((arm["id"] for arm in manifest["suite"]["arms"] if arm["role"] == "treatment"), None)
+        effective_suite = Suite.model_validate(manifest["suite"])
         expected_identities = {
             (arm["id"], scenario_id, sample)
             for arm in manifest["suite"]["arms"]
@@ -681,8 +680,11 @@ def _execute_run(
             cells,
             expected_identities,
             expected_families={scenario_id: _scenario_family(catalog[scenario_id]) for scenario_id in manifest["suite"]["scenarios"]},
-            control_arm=control_arm,
-            treatment_arm=treatment_arm,
+            analysis=AnalysisPlan.from_suite(
+                effective_suite,
+                families={scenario_id: _scenario_family(catalog[scenario_id]) for scenario_id in effective_suite.scenarios},
+                samples=manifest["samples"],
+            ),
             pipeline_elapsed_seconds=time.monotonic() - run_started,
             run_purpose=manifest["run_purpose"],
             samples_per_identity=manifest["samples"],

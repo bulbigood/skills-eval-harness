@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from skills_eval_harness.cli import _required_cell_pass, _scenario_family
 from skills_eval_harness.judge import JudgeVerdict
-from skills_eval_harness.models import Suite
+from skills_eval_harness.models import AnalysisPlan, Suite
 from skills_eval_harness.results import (
     CellRecord,
     summarize_cells as _summarize_cells,
@@ -21,7 +21,18 @@ from skills_eval_harness.results import (
 
 
 def summarize_cells(cells: list[dict], identities: set[tuple[str, str, int]], **kwargs: Any) -> dict:
-    return _summarize_cells(cells, identities, expected_families={"one": "read"}, **kwargs)
+    arms = sorted({identity[0] for identity in identities})
+    paired = len(arms) == 2
+    roles = {arm: None for arm in arms}
+    if paired:
+        roles = {"no-skill": "control", "skill": "treatment"}
+    analysis = AnalysisPlan(
+        kind="paired" if paired else "absolute", arms=tuple(arms), roles=roles,
+        scenarios=("one",), families={"one": "read"}, samples=max((item[2] for item in identities), default=1),
+    )
+    kwargs.pop("control_arm", None)
+    kwargs.pop("treatment_arm", None)
+    return _summarize_cells(cells, identities, expected_families={"one": "read"}, analysis=analysis, **kwargs)
 
 
 def valid_cell(arm: str, sample: int, *, score: float = 5, wall: float = 10.0) -> dict:

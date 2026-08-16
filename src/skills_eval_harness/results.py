@@ -12,10 +12,10 @@ from harbor.models.job.result import JobResult, TrialResult
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .hashing import atomic_write_json, sha256_file
+from .acceptance import CURRENT_ACCEPTANCE_POLICY
+from .models import AnalysisPlan
 from .judge import (
-    DIMENSION_THRESHOLDS,
     DIMENSIONS,
-    SAMPLE_PASS_RATE_THRESHOLDS,
     Evidence,
     EvidenceKind,
     JudgeVerdict,
@@ -288,16 +288,15 @@ def _paired_statistics(
 def _acceptance_summary(
     cells: list[dict],
     *,
-    control_arm: str | None,
+    analysis: AnalysisPlan,
 ) -> dict:
     criteria: list[dict] = []
     groups = sorted({(cell["arm"], cell["scenario_id"]) for cell in cells})
     for arm, scenario_id in groups:
         group = [cell for cell in cells if cell["arm"] == arm and cell["scenario_id"] == scenario_id]
-        dimensions = (
-            ("safety",)
-            if arm == control_arm
-            else tuple(name for name in DIMENSIONS if any(name in cell.get("scores", {}) for cell in group))
+        dimensions = CURRENT_ACCEPTANCE_POLICY.applicable_dimensions(
+            analysis.roles[arm],
+            {name for cell in group for name in cell.get("scores", {})},
         )
         for dimension in dimensions:
             passed_samples = sum(
@@ -305,16 +304,17 @@ def _acceptance_summary(
                 for cell in group
                 if cell["valid"]
                 and cell.get("scenario_outcome", "passed") == "passed"
-                and cell.get("scores", {}).get(dimension, float("-inf")) >= DIMENSION_THRESHOLDS[dimension]
+                and cell.get("scores", {}).get(dimension, float("-inf"))
+                >= CURRENT_ACCEPTANCE_POLICY.score_thresholds[dimension]
             )
             total_samples = len(group)
             observed = passed_samples / total_samples
-            required = SAMPLE_PASS_RATE_THRESHOLDS[dimension]
+            required = CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds[dimension]
             criteria.append({
                 "arm": arm,
                 "scenario_id": scenario_id,
                 "dimension": dimension,
-                "score_threshold": DIMENSION_THRESHOLDS[dimension],
+                "score_threshold": CURRENT_ACCEPTANCE_POLICY.score_thresholds[dimension],
                 "passed_samples": passed_samples,
                 "total_samples": total_samples,
                 "observed_pass_rate": observed,
@@ -322,8 +322,9 @@ def _acceptance_summary(
                 "pass": observed >= required,
             })
     return {
-        "score_thresholds": dict(DIMENSION_THRESHOLDS),
-        "sample_pass_rate_thresholds": dict(SAMPLE_PASS_RATE_THRESHOLDS),
+        "policy_id": CURRENT_ACCEPTANCE_POLICY.policy_id,
+        "score_thresholds": CURRENT_ACCEPTANCE_POLICY.score_thresholds,
+        "sample_pass_rate_thresholds": CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds,
         "criteria": criteria,
         "pass": all(item["pass"] for item in criteria),
     }
@@ -334,8 +335,7 @@ def summarize_cells(
     expected_identities: set[tuple[str, str, int]],
     *,
     expected_families: dict[str, str],
-    control_arm: str | None = None,
-    treatment_arm: str | None = None,
+    analysis: AnalysisPlan,
     pipeline_elapsed_seconds: float | None = None,
     run_purpose: str = "diagnostic",
     samples_per_identity: int | None = None,
@@ -362,14 +362,14 @@ def summarize_cells(
         if cell["family"] != expected_families.get(cell["scenario_id"]):
             raise ValueError("cell family does not match the sealed scenario catalog")
     arms = sorted({identity[0] for identity in expected_identities})
-    paired_run = len(arms) == 2
-    if paired_run and ({control_arm, treatment_arm} != set(arms) or control_arm == treatment_arm):
-        raise ValueError("paired summaries require explicit control and treatment arms")
-    if not paired_run and (control_arm is not None or treatment_arm is not None):
-        raise ValueError("single-arm summaries must not declare paired roles")
+    if set(arms) != set(analysis.arms):
+        raise ValueError("analysis arms do not match the identity matrix")
+    paired_run = analysis.kind == "paired"
+    control_arm = analysis.control_arm
+    treatment_arm = analysis.treatment_arm
 
     valid = all(cell["valid"] for cell in normalized)
-    acceptance = _acceptance_summary(normalized, control_arm=control_arm)
+    acceptance = _acceptance_summary(normalized, analysis=analysis)
     passed = valid and acceptance["pass"]
     scenarios = sorted({identity[1] for identity in expected_identities})
     families = sorted({cell["family"] for cell in normalized})
@@ -449,10 +449,30 @@ def summarize_cells(
         }
     return {
         "schema_version": 5,
+        "analysis": {
+            "kind": analysis.kind,
+            "absolute": {"arm": analysis.arms[0]} if analysis.kind == "absolute" else None,
+            "paired": (
+                {"control_arm": control_arm, "treatment_arm": treatment_arm}
+                if analysis.kind == "paired" else None
+            ),
+        },
         "expected_cells": len(expected_identities),
         "observed_cells": len(normalized),
         "valid": valid,
         "pass": passed,
+        "evaluation_status": {
+            "evidence_integrity": "valid" if valid else "invalid",
+            "acceptance": {
+                "applicable": True,
+                "passed": acceptance["pass"],
+                "policy_id": acceptance["policy_id"],
+            },
+            "comparison": {
+                "kind": "descriptive-paired" if paired_run else "absolute",
+                "superiority_verdict": "not-asserted" if paired_run else None,
+            },
+        },
         "acceptance": acceptance,
         "reliability": {
             "planned_cells_by_arm": planned_by_arm,
@@ -511,8 +531,7 @@ def write_summary(
     expected_identities: set[tuple[str, str, int]],
     *,
     expected_families: dict[str, str],
-    control_arm: str | None = None,
-    treatment_arm: str | None = None,
+    analysis: AnalysisPlan,
     pipeline_elapsed_seconds: float | None = None,
     run_purpose: str = "diagnostic",
     samples_per_identity: int | None = None,
@@ -522,8 +541,7 @@ def write_summary(
         cells,
         expected_identities,
         expected_families=expected_families,
-        control_arm=control_arm,
-        treatment_arm=treatment_arm,
+        analysis=analysis,
         pipeline_elapsed_seconds=pipeline_elapsed_seconds,
         run_purpose=run_purpose,
         samples_per_identity=samples_per_identity,
