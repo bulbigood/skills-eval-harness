@@ -77,6 +77,9 @@ def test_fixture_variants_materialize_required_baselines(
         config = (destination / ".iwe/config.toml").read_text()
         assert "[actions.inbox]" in config
         assert 'key_template = "inbox"' in config
+        referrer = (destination / "graph/core-referrer.md").read_text()
+        assert "[Core Old](core-old.md)" in referrer
+        assert "[Core Delete](core-delete.md)" in referrer
 
 
 def test_unknown_fixture_variant_fails_closed(tmp_path: Path) -> None:

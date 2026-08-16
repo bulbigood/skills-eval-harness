@@ -102,7 +102,7 @@ def _materialize_core_write(root: Path) -> None:
         "core-parent.md": "# Core Parent\n\nParent introduction.\n\n[Core Child](core-child.md)\n",
         "core-child.md": "# Core Child\n\nChild details.\n",
         "core-block-replace.md": "# Core Block Replace\n\n## Overview\n\nKeep overview.\n\n## Rollback\n\nUse the emergency procedure.\n\n## Tail\n\nKeep tail.\n",
-        "core-referrer.md": "# Core Referrer\n\n[Core Old](core-old.md)\n",
+        "core-referrer.md": "# Core Referrer\n\n[Core Old](core-old.md)\n\n[Core Delete](core-delete.md)\n",
     }
     for name, content in documents.items():
         _write(root, f"graph/{name}", content)
