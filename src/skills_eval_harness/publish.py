@@ -12,6 +12,7 @@ from .bundle import validate_run_bundle
 from .hashing import atomic_write, canonical_json, sha256_bytes
 from .models import validate_run_id
 from .provenance import Provenance
+from .reporting import render_human_sections
 from .telemetry import validate_device_telemetry
 
 
@@ -140,9 +141,6 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
     output.parent.mkdir(parents=True, exist_ok=True)
 
     repository = canonical_repository(root)
-    statistics_json = canonical_json(
-        {"statistics": summary.get("statistics", {}), "timing": summary.get("timing", {})}
-    ).decode()
     samples = telemetry.samples
     telemetry_summary = {
         "schema_version": telemetry.schema_version,
@@ -177,6 +175,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "disk_write_bytes_total": telemetry.totals.disk_write_bytes,
         })
     telemetry_json = canonical_json(telemetry_summary).decode()
+    human_sections = render_human_sections(summary)
     evidence_line = (
         f"- Sealed evidence: [`{evidence_dir.name}`]({evidence_dir.name}/run-seal.json)\n"
         if include_evidence
@@ -200,11 +199,7 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
 - Complete cells: `{summary['observed_cells']}` / `{summary['expected_cells']}`
 {evidence_line}
 
-## Verified statistics
-
-```json
-{statistics_json}
-```
+{human_sections}
 
 ## Sanitized device telemetry
 

@@ -59,7 +59,7 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 Completed trials with deterministic task failures remain valid, judged experimental outcomes. Exceptions, malformed verifier evidence, judge failures, missing cells, or telemetry failures remain invalid. `summary.valid` represents evidence integrity; `summary.pass` describes the benchmark result. A structurally valid failing production benchmark may therefore be sealed and published with an explicit **FAIL** verdict.
 
-`device-telemetry.json` persists CPU, memory, default-route network, physical-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication always revalidates the sealed production bundle and stages the report plus checksum. The evidence bundle is omitted by default; pass `--include-evidence` to additionally copy, revalidate, and stage telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
+`device-telemetry.json` persists CPU, memory, default-route network, physical-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication always revalidates the sealed production bundle and stages the report plus checksum. The report leads with deterministic human-readable executive, paired overall, per-scenario, per-family, failure-ledger, reliability, and timing sections; complete machine-readable statistics remain in a collapsible audit appendix. The evidence bundle is omitted by default; pass `--include-evidence` to additionally copy, revalidate, and stage telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
 
 ## Suites
 
