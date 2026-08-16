@@ -143,8 +143,8 @@ def test_materialized_bytes_and_harbor_lock_are_bound(tmp_path: Path) -> None:
     provenance, paths = make_provenance(tmp_path)
     verify_materialized(
         provenance,
-        source_root=paths["source"],
-        skill_root=paths["skill"],
+        source_tree_sha256=sha256_tree(paths["source"]),
+        skill_tree_sha256=sha256_tree(paths["skill"]),
         runtime=paths["runtime"],
         suite=paths["suite"],
         scenarios=paths["scenarios"],
@@ -159,8 +159,8 @@ def test_tampering_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="provenance mismatch"):
         verify_materialized(
             provenance,
-            source_root=paths["source"],
-            skill_root=paths["skill"],
+            source_tree_sha256=sha256_tree(paths["source"]),
+            skill_tree_sha256=sha256_tree(paths["skill"]),
             runtime=paths["runtime"],
             suite=paths["suite"],
             scenarios=paths["scenarios"],

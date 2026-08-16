@@ -469,8 +469,8 @@ def _execute_run(
     runtime, _ = verify_runtime(Path(args.runtime), args.runtime_version)
     verify_materialized(
         provenance,
-        source_root=source.repository_root,
-        skill_root=source.skill_root,
+        source_tree_sha256=source.repository_sha256,
+        skill_tree_sha256=source.skill_sha256,
         runtime=runtime,
         suite=run_root / "inputs/suite.yaml",
         scenarios=run_root / "inputs/scenario-catalog.yaml",

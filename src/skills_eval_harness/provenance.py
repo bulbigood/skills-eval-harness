@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from .hashing import atomic_write_json, sha256_file, sha256_tree
+from .hashing import atomic_write_json, sha256_file
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -94,8 +94,8 @@ class Provenance(BaseModel):
 def verify_materialized(
     provenance: Provenance,
     *,
-    source_root: Path,
-    skill_root: Path,
+    source_tree_sha256: str,
+    skill_tree_sha256: str,
     runtime: Path,
     suite: Path,
     scenarios: Path,
@@ -103,8 +103,8 @@ def verify_materialized(
 ) -> None:
     provenance.validated()
     actual = {
-        "source_tree_sha256": sha256_tree(source_root),
-        "selected_skill_sha256": sha256_tree(skill_root),
+        "source_tree_sha256": source_tree_sha256,
+        "selected_skill_sha256": skill_tree_sha256,
         "runtime_sha256": sha256_file(runtime),
         "suite_sha256": sha256_file(suite),
         "scenario_catalog_sha256": sha256_file(scenarios),
