@@ -101,8 +101,7 @@ def test_paired_report_describes_each_arm_with_skill_agent_and_runtime() -> None
     assert "## Compared arms" in report
     assert "[iwe-v18](https://github.com/iwe-org/skills/tree/abc/skills/iwe-v18) v0.9.9" in report
     assert "No skill guidance" in report
-    assert "openai/gpt-5.6-luna" in report
-    assert "not explicitly configured (agent default)" in report
+    assert "openai/gpt-5.6-luna (reasoning: not explicitly configured (agent default))" in report
     assert "Judge model" in report
     assert "gpt-5.6-sol" in report
     assert "`low`" in report
