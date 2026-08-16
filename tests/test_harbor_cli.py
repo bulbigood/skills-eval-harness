@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,12 +13,18 @@ from skills_eval_harness.cli import (
     _run_concurrently_in_order,
     _scenario_family,
     parser,
+    prepare,
     verify_agent_image,
 )
 from skills_eval_harness.dataset import scenario_map
 from skills_eval_harness.models import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_production_clean_tree_guard_precedes_skill_cache_resolution() -> None:
+    source = inspect.getsource(prepare)
+    assert source.index("commit, dirty = _clean_git()") < source.index("source = resolve_skill(")
 
 
 def test_codex_auth_cli_supports_api_key_and_explicit_chatgpt_modes(capsys: pytest.CaptureFixture[str]) -> None:

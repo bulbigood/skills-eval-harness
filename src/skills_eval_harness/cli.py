@@ -174,11 +174,6 @@ def prepare(args: argparse.Namespace) -> Path:
         raise ValueError("runtime bytes do not match the canonical version registry")
     agents_template, _ = _agents_template(args.agents_template)
     fixtures = dict(args.fixture)
-    source = resolve_skill(args.skill_source, Path(args.cache).resolve() / "skills")
-    if source.source_url.split("/tree/", 1)[0].rstrip("/").removesuffix(".git") not in {
-        value.rstrip("/").removesuffix(".git") for value in config.skill_repositories
-    }:
-        raise ValueError("skill source repository is not in the canonical registry")
     commit, dirty = _clean_git()
     try:
         suite_repository_path = suite_path.relative_to(ROOT).as_posix()
@@ -196,6 +191,11 @@ def prepare(args: argparse.Namespace) -> Path:
         )
         if dirty or not tracked_suite:
             raise ValueError("production runs require a clean harness and a tracked canonical suite")
+    source = resolve_skill(args.skill_source, Path(args.cache).resolve() / "skills")
+    if source.source_url.split("/tree/", 1)[0].rstrip("/").removesuffix(".git") not in {
+        value.rstrip("/").removesuffix(".git") for value in config.skill_repositories
+    }:
+        raise ValueError("skill source repository is not in the canonical registry")
     output = Path(args.output).resolve()
     if output.exists():
         raise FileExistsError(f"refusing to reuse evaluation output directory: {output}")
