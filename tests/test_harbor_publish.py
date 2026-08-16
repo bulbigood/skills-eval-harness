@@ -156,6 +156,8 @@ def test_publisher_defaults_to_report_without_evidence(tmp_path: Path) -> None:
     assert "Sealed evidence" not in text
     assert "<summary>Complete sanitized device telemetry</summary>" in text
     assert '\n  "cpu_percent_max":' in text
+    assert '"p50"' not in text
+    assert "median" not in text.lower()
     assert output.with_suffix(".md.sha256").is_file()
     assert not output.with_suffix(".evidence").exists()
     staged = subprocess.run(

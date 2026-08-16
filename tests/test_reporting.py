@@ -90,6 +90,9 @@ def test_paired_report_describes_each_arm_with_skill_agent_and_runtime() -> None
         "agent_name": "codex",
         "agent_version": "0.147.0",
         "agent_model": "openai/gpt-5.6-luna",
+        "worker_reasoning": "not explicitly configured (agent default)",
+        "judge_model": "gpt-5.6-sol",
+        "judge_reasoning": "low",
         "runtime_name": "IWE",
         "runtime_version": "0.18.0",
         "runtime_sha256": "abc123",
@@ -99,8 +102,13 @@ def test_paired_report_describes_each_arm_with_skill_agent_and_runtime() -> None
     assert "[iwe-v18](https://github.com/iwe-org/skills/tree/abc/skills/iwe-v18) v0.9.9" in report
     assert "No skill guidance" in report
     assert "openai/gpt-5.6-luna" in report
+    assert "not explicitly configured (agent default)" in report
+    assert "Judge model" in report
+    assert "gpt-5.6-sol" in report
+    assert "`low`" in report
     assert "IWE 0.18.0" in report
     assert "reproducibility" in report
+    assert "median" not in report.lower()
 
 
 def test_non_paired_report_keeps_suite_verdict() -> None:

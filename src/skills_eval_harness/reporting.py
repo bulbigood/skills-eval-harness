@@ -43,8 +43,8 @@ def _escape(value: Any) -> str:
 
 def _distribution_table(overall: dict[str, Any]) -> str:
     arms = overall["arm_distributions"]
-    rows = ["| Metric | Skill mean | No-skill mean | Paired Δ | Δ median | n |",
-            "|---|---:|---:|---:|---:|---:|"]
+    rows = ["| Metric | Skill mean | No-skill mean | Paired mean Δ | n |",
+            "|---|---:|---:|---:|---:|"]
     for key, label in {**_SCORE_LABELS, **_METRIC_LABELS}.items():
         section = "scores" if key in _SCORE_LABELS else None
         treatment_value = arms["treatment"][section][key] if section else arms["treatment"][key]
@@ -53,7 +53,7 @@ def _distribution_table(overall: dict[str, Any]) -> str:
                   else overall["metric_delta_treatment_minus_control"])[key]
         rows.append(
             f"| {label} | {_fmt(treatment_value['mean'])} | {_fmt(control_value['mean'])} | "
-            f"{_fmt(deltas['mean'])} | {_fmt(deltas['p50'])} | {deltas['n']} |"
+            f"{_fmt(deltas['mean'])} | {deltas['n']} |"
         )
     return "\n".join(rows)
 
@@ -89,6 +89,19 @@ def _failure_ledger(cells: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+def _without_medians(value: Any) -> Any:
+    """Remove median-only fields from report presentation, not source evidence."""
+    if isinstance(value, dict):
+        return {
+            key: _without_medians(item)
+            for key, item in value.items()
+            if key != "p50" and "median" not in key.lower()
+        }
+    if isinstance(value, list):
+        return [_without_medians(item) for item in value]
+    return value
+
+
 def render_human_sections(
     summary: dict[str, Any], *, context: dict[str, Any] | None = None
 ) -> str:
@@ -102,7 +115,7 @@ def render_human_sections(
             f"Overall suite verdict: **{verdict}**. Complete cells: "
             f"`{summary.get('observed_cells', 0)}` / `{summary.get('expected_cells', 0)}`.\n\n"
             "## Audit appendix\n\n```json\n"
-            + json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2)
+            + json.dumps(_without_medians(summary), ensure_ascii=False, sort_keys=True, indent=2)
             + "\n```"
         )
     treatment = paired["treatment_arm"]
@@ -124,6 +137,9 @@ def render_human_sections(
     skill_hash = context.get("skill_sha256", "unknown")
     skill_source_commit = context.get("skill_source_commit", "unknown")
     runtime_hash = context.get("runtime_sha256", "unknown")
+    worker_reasoning = context.get("worker_reasoning", "not recorded")
+    judge_model = context.get("judge_model", "not recorded")
+    judge_reasoning = context.get("judge_reasoning", "not recorded")
 
     lines = [
         "## Executive summary",
@@ -141,10 +157,15 @@ def render_human_sections(
         "",
         "## Compared arms",
         "",
-        "| Arm | Role | Skill guidance | Worker agent | Model | Runtime |",
-        "|---|---|---|---|---|---|",
-        f"| `{treatment}` | Treatment | {skill_display} v{skill_version} | `{agent}` | `{agent_model}` | `{runtime}` |",
-        f"| `{control}` | Control | No skill guidance | `{agent}` | `{agent_model}` | `{runtime}` |",
+        "| Arm | Role | Skill guidance | Worker agent | Model | Reasoning | Runtime |",
+        "|---|---|---|---|---|---|---|",
+        f"| `{treatment}` | Treatment | {skill_display} v{skill_version} | `{agent}` | `{agent_model}` | {worker_reasoning} | `{runtime}` |",
+        f"| `{control}` | Control | No skill guidance | `{agent}` | `{agent_model}` | {worker_reasoning} | `{runtime}` |",
+        "",
+        "### Judge configuration",
+        "",
+        f"- Judge model: `{judge_model}`",
+        f"- Judge reasoning: `{judge_reasoning}`",
         "",
         f"The treatment skill comes from skill-repository commit `{skill_source_commit}`. Its content SHA-256 "
         f"is `{skill_hash}`; this immutable content identity is recorded "
@@ -190,7 +211,7 @@ def render_human_sections(
         "",
         "```json",
         json.dumps(
-            {"statistics": summary.get("statistics", {}), "timing": timing},
+            _without_medians({"statistics": summary.get("statistics", {}), "timing": timing}),
             ensure_ascii=False,
             sort_keys=True,
             indent=2,

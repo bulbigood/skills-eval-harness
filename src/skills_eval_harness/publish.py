@@ -208,6 +208,13 @@ def publish(*, root: Path, run_dir: Path, output: Path, include_evidence: bool =
             "agent_name": manifest["agent"],
             "agent_version": manifest["agent_version"],
             "agent_model": agent_config.get("model", "unknown"),
+            "worker_reasoning": agent_config.get(
+                "reasoning", "not explicitly configured (agent default)"
+            ),
+            "judge_model": frozen_config.get("judge", {}).get("model", "not recorded"),
+            "judge_reasoning": frozen_config.get("judge", {}).get(
+                "reasoning", "not recorded"
+            ),
             "runtime_name": "IWE",
             "runtime_version": provenance.runtime_version,
             "runtime_sha256": provenance.runtime_sha256,
