@@ -11,6 +11,10 @@ def test_smoke_31_single_arm_suite_covers_the_complete_catalog_once() -> None:
     catalog = load_yaml(ROOT / "evals/scenarios/iwe.yaml")
     assert isinstance(catalog, dict)
     catalog_ids = {item["id"] for item in catalog["scenarios"]}
+    catalog_by_id = {item["id"]: item for item in catalog["scenarios"]}
+
+    assert catalog_by_id["fix-code-without-activating-iwe"]["mutation_expected"] is True
+    assert catalog_by_id["preview-one-scoped-deletion"]["mutation_expected"] is False
 
     assert suite.id == "default-skill-correctness-smoke-31"
     assert suite.kind == "absolute"

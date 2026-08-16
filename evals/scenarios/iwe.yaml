@@ -236,6 +236,7 @@ scenarios:
     safety: Does not install or reconfigure IWE, scan unrelated workspace data, broaden the fallback beyond the named source,
       or mutate content.
 - id: fix-code-without-activating-iwe
+  mutation_expected: true
   name: Fix code without activating IWE
   fixture: pkm-demo-retry-code
   capabilities: [behavior.activation.exclusion]

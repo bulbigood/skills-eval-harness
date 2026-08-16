@@ -106,6 +106,12 @@ def _materialize_core_write(root: Path) -> None:
     }
     for name, content in documents.items():
         _write(root, f"graph/{name}", content)
+    config = root / ".iwe/config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + '\n[actions.inbox]\ntype = "attach"\ntitle = "Inbox"\nkey_template = "inbox"\n',
+        encoding="utf-8",
+    )
 
 
 def _materialize_update(root: Path) -> None:

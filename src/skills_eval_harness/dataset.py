@@ -296,7 +296,7 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             atomic_write(
                 task / "tests/policy.json",
                 canonical_json({
-                    "read_only": not write_capability,
+                    "read_only": not mutation_expected,
                     "mutation_expected": mutation_expected,
                     "hard_max_task_tool_calls": hard_max,
                 }),

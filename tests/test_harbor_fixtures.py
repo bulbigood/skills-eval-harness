@@ -73,6 +73,10 @@ def test_fixture_variants_materialize_required_baselines(
     materialize_fixture(source, destination, fixture_name)
 
     assert all((destination / path).is_file() for path in required_paths)
+    if fixture_name == "pkm-demo-core-write":
+        config = (destination / ".iwe/config.toml").read_text()
+        assert "[actions.inbox]" in config
+        assert 'key_template = "inbox"' in config
 
 
 def test_unknown_fixture_variant_fails_closed(tmp_path: Path) -> None:
