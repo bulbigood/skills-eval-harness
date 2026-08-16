@@ -45,7 +45,8 @@ def _skill_metadata(run_dir: Path) -> dict[str, str]:
     if not isinstance(frontmatter, dict):
         raise ValueError("selected skill frontmatter must be an object")
     name = frontmatter.get("name")
-    version = frontmatter.get("version")
+    metadata = frontmatter.get("metadata", {})
+    version = metadata.get("version") if isinstance(metadata, dict) else None
     if not isinstance(name, str) or not name or not isinstance(version, str) or not version:
         raise ValueError("selected skill frontmatter requires string name and version")
     return {"name": name, "version": version}

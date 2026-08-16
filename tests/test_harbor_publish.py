@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from skills_eval_harness.publish import publish
+from skills_eval_harness.publish import _skill_metadata, publish
 from skills_eval_harness.hashing import sha256_file
 from skills_eval_harness.provenance import Provenance, seal_run, verify_run_seal
 from skills_eval_harness.telemetry import validate_device_telemetry
@@ -54,6 +54,15 @@ def provenance(dirty: bool = False) -> Provenance:
         image_digests={"agent": SHA},
         fixture_sources={"fixture": {"repository": "https://github.com/acme/fixture", "commit": COMMIT, "tree": COMMIT, "payload_sha256": SHA}},
     )
+
+
+def test_skill_metadata_reads_nested_version(tmp_path: Path) -> None:
+    skill = tmp_path / "inputs/selected-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: iwe-v18\nmetadata:\n  version: \"0.9.9\"\n---\nbody\n"
+    )
+    assert _skill_metadata(tmp_path) == {"name": "iwe-v18", "version": "0.9.9"}
 
 
 def setup(tmp_path: Path) -> tuple[Path, Path]:
