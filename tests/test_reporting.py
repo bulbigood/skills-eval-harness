@@ -147,6 +147,11 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
         )
         assert "skill_compliance" in report
         assert "model\\|unsafe (reasoning: medium)" in report
+        assert (
+            "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`"
+            in report
+        )
+        assert report.index("| `skill_compliance` |") < report.index("| `task_correctness` |")
         assert "median" not in report.lower() and '"p50"' not in report
 
 

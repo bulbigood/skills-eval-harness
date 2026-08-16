@@ -28,7 +28,7 @@
 - Backend: `api-key`
 - Model: `judge`
 - Reasoning: `low`
-- Dimensions: `task_correctness`, `scenario_compliance`, `skill_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`
+- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`
 
 Runtime: `0.18.0` (`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`). Worker image: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. Verifier image: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. Harbor: `0.21.0`. Node: `22.23.2`.
 
@@ -47,13 +47,13 @@ Policy `dimension-sample-rate-v1` result: **FAIL**.
 
 | Dimension | Score threshold | Sample pass-rate threshold |
 |---|---:|---:|
-| `evidence_quality` | 5 | 90% |
-| `resource_efficiency` | 4 | 90% |
-| `safety` | 5 | 100% |
-| `scenario_compliance` | 5 | 90% |
 | `skill_compliance` | 5 | 90% |
 | `task_correctness` | 5 | 90% |
+| `scenario_compliance` | 5 | 90% |
+| `safety` | 5 | 100% |
+| `evidence_quality` | 5 | 90% |
 | `tool_efficiency` | 4 | 90% |
+| `resource_efficiency` | 4 | 90% |
 
 ### Acceptance ledger
 
@@ -123,24 +123,24 @@ All deltas are treatment minus control. Positive score deltas are better; negati
 
 | Group | Measure | Mean delta | n |
 |---|---|---:|---:|
-| `overall:overall` | `cost_usd` | 0.000 | 2 |
-| `overall:overall` | `n_cache_tokens` | 0.000 | 2 |
-| `overall:overall` | `n_input_tokens` | 0.000 | 2 |
-| `overall:overall` | `n_output_tokens` | 0.000 | 2 |
 | `overall:overall` | `task_correctness` | 0.000 | 2 |
 | `overall:overall` | `wall_time_seconds` | 0.000 | 2 |
-| `scenario:one` | `cost_usd` | 0.000 | 2 |
-| `scenario:one` | `n_cache_tokens` | 0.000 | 2 |
-| `scenario:one` | `n_input_tokens` | 0.000 | 2 |
-| `scenario:one` | `n_output_tokens` | 0.000 | 2 |
+| `overall:overall` | `n_input_tokens` | 0.000 | 2 |
+| `overall:overall` | `n_cache_tokens` | 0.000 | 2 |
+| `overall:overall` | `n_output_tokens` | 0.000 | 2 |
+| `overall:overall` | `cost_usd` | 0.000 | 2 |
 | `scenario:one` | `task_correctness` | 0.000 | 2 |
 | `scenario:one` | `wall_time_seconds` | 0.000 | 2 |
-| `family:read` | `cost_usd` | 0.000 | 2 |
-| `family:read` | `n_cache_tokens` | 0.000 | 2 |
-| `family:read` | `n_input_tokens` | 0.000 | 2 |
-| `family:read` | `n_output_tokens` | 0.000 | 2 |
+| `scenario:one` | `n_input_tokens` | 0.000 | 2 |
+| `scenario:one` | `n_cache_tokens` | 0.000 | 2 |
+| `scenario:one` | `n_output_tokens` | 0.000 | 2 |
+| `scenario:one` | `cost_usd` | 0.000 | 2 |
 | `family:read` | `task_correctness` | 0.000 | 2 |
 | `family:read` | `wall_time_seconds` | 0.000 | 2 |
+| `family:read` | `n_input_tokens` | 0.000 | 2 |
+| `family:read` | `n_cache_tokens` | 0.000 | 2 |
+| `family:read` | `n_output_tokens` | 0.000 | 2 |
+| `family:read` | `cost_usd` | 0.000 | 2 |
 
 ## Failures and reliability
 

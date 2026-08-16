@@ -12,6 +12,14 @@ from .report_models import ReportContext
 from .summary import SummaryV5
 
 
+PRESENTATION_SCORES = (
+    "skill_compliance", "task_correctness", "scenario_compliance", "safety",
+    "evidence_quality", "tool_efficiency", "resource_efficiency",
+)
+PRESENTATION_MEASURES = (*PRESENTATION_SCORES, *METRICS)
+PRESENTATION_INDEX = {name: index for index, name in enumerate(PRESENTATION_MEASURES)}
+
+
 def _escape(value: object) -> str:
     text = re.sub(r"[\x00-\x1f\x7f]", " ", str(value))
     return html.escape(text, quote=True).replace("\\", "\\\\").replace("|", "\\|").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
@@ -76,7 +84,7 @@ def _configuration(context: ReportContext) -> str:
     for arm in sorted(context.identity.arms, key=lambda item: item["id"]):
         skill = f"{context.provenance.skill_name} v{context.provenance.skill_version}" if arm["skill"] else "none"
         lines.append(f"| `{_escape(arm['id'])}` | `{_escape(arm['role'] or 'absolute')}` | {_escape(skill)} | `{_escape(context.execution.agent_name)} {_escape(context.execution.agent_version)}` | `{_escape(context.execution.worker_model)} (reasoning: {_escape(context.execution.worker_reasoning)})` |")
-    lines += ["", "### Judge configuration", "", f"- Backend: `{_escape(context.execution.judge_backend)}`", f"- Model: `{_escape(context.execution.judge_model)}`", f"- Reasoning: `{_escape(context.execution.judge_reasoning)}`", "- Dimensions: `task_correctness`, `scenario_compliance`, `skill_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`", "", f"Runtime: `{_escape(context.execution.runtime_version)}` (`{context.execution.runtime_sha256}`). Worker image: `{context.execution.agent_image_sha256}`. Verifier image: `{context.execution.verifier_image_sha256}`. Harbor: `{_escape(context.execution.harbor_version)}`. Node: `{_escape(context.execution.node_version)}`."]
+    lines += ["", "### Judge configuration", "", f"- Backend: `{_escape(context.execution.judge_backend)}`", f"- Model: `{_escape(context.execution.judge_model)}`", f"- Reasoning: `{_escape(context.execution.judge_reasoning)}`", "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`", "", f"Runtime: `{_escape(context.execution.runtime_version)}` (`{context.execution.runtime_sha256}`). Worker image: `{context.execution.agent_image_sha256}`. Verifier image: `{context.execution.verifier_image_sha256}`. Harbor: `{_escape(context.execution.harbor_version)}`. Node: `{_escape(context.execution.node_version)}`."]
     return "\n".join(lines)
 
 
@@ -87,10 +95,12 @@ def _provenance(context: ReportContext) -> str:
 def _acceptance(summary: SummaryV5) -> str:
     acceptance = summary.acceptance
     lines = ["## Acceptance policy and result", "", f"Policy `{_escape(acceptance.policy_id)}` result: **{'PASS' if acceptance.pass_ else 'FAIL'}**.", "", "| Dimension | Score threshold | Sample pass-rate threshold |", "|---|---:|---:|"]
-    for name in sorted(acceptance.score_thresholds):
+    for name in PRESENTATION_SCORES:
+        if name not in acceptance.score_thresholds:
+            continue
         lines.append(f"| `{name}` | {acceptance.score_thresholds[name]} | {acceptance.sample_pass_rate_thresholds[name]:.0%} |")
     lines += ["", "### Acceptance ledger", "", "| Arm | Scenario | Dimension | Passed | Observed | Required | Result |", "|---|---|---|---:|---:|---:|---|"]
-    for row in sorted(acceptance.criteria, key=lambda item: (item.arm, item.scenario_id, item.dimension)):
+    for row in sorted(acceptance.criteria, key=lambda item: (item.arm, item.scenario_id, PRESENTATION_INDEX[item.dimension])):
         lines.append(f"| `{_escape(row.arm)}` | `{_escape(row.scenario_id)}` | `{_escape(row.dimension)}` | {row.passed_samples} / {row.total_samples} | {row.observed_pass_rate:.0%} | {row.required_pass_rate:.0%} | {'PASS' if row.pass_ else '**FAIL**'} |")
     lines += ["", "The suite passes only when evidence is valid and every applicable criterion passes. Control arms are acceptance-blocking only for safety."]
     return "\n".join(lines)
@@ -100,7 +110,7 @@ def _distribution_rows(groups: dict[str, Any], label: str) -> list[str]:
     rows = [f"### {label}", "", "| Group | Arm | Measure | Mean | n | Direction |", "|---|---|---|---:|---:|---|"]
     for group_name, arms in sorted(groups.items()):
         for arm, stats in sorted(arms.items()):
-            for name in (*SCORES, *METRICS):
+            for name in PRESENTATION_MEASURES:
                 dist = stats.get("scores", {}).get(name) if name in SCORES else stats.get(name)
                 if dist:
                     direction = next(item.direction for item in MEASURES if item.name == name)
@@ -116,7 +126,11 @@ def _descriptive(context: ReportContext) -> str:
         lines += ["", "### Common-valid paired cohorts and treatment-minus-control deltas", "", "All deltas are treatment minus control. Positive score deltas are better; negative resource deltas are better.", "", "| Group | Measure | Mean delta | n |", "|---|---|---:|---:|"]
         for scope, groups in (("overall", {"overall": paired["overall"]}), ("scenario", paired["per_scenario"]), ("family", paired["per_family"])):
             for name, group in sorted(groups.items()):
-                for measure, dist in sorted({**group["score_delta_treatment_minus_control"], **group["metric_delta_treatment_minus_control"]}.items()):
+                deltas = {**group["score_delta_treatment_minus_control"], **group["metric_delta_treatment_minus_control"]}
+                for measure in PRESENTATION_MEASURES:
+                    if measure not in deltas:
+                        continue
+                    dist = deltas[measure]
                     lines.append(f"| `{scope}:{_escape(name)}` | `{measure}` | {_fmt(dist['mean'])} | {dist['n']} |")
     return "\n".join(lines)
 
