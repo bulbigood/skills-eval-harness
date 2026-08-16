@@ -126,6 +126,7 @@ None.
 
 - Planned / observed / valid cells: `2` / `2` / `2`.
 - Deterministic failures by arm: `{"skill": 0}`.
+- Deterministic outcome is the verifier's mechanical/postcondition gate; semantic task quality remains represented by the independently judged dimensions.
 - Missingness by scenario: `{"one": {"invalid": 0, "invalid_reasons": {}, "planned": 2, "valid": 2}}`.
 - Missingness by family: `{"read": {"invalid": 0, "invalid_reasons": {}, "planned": 2, "valid": 2}}`.
 

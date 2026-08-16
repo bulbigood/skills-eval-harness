@@ -150,6 +150,7 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
         assert "## Key results" in report
         assert "<summary>Complete task identity map</summary>" in report
         assert "canonical map SHA-256" in report
+        assert "Deterministic outcome is the verifier's mechanical/postcondition gate" in report
         assert "model\\|unsafe (reasoning: medium)" in report
         assert (
             "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`"
