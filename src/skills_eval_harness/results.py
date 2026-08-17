@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from harbor.models.job.result import JobResult, TrialResult
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .hashing import atomic_write_json, sha256_bytes, sha256_file
+from .hashing import atomic_write_json, sha256_file
 from .acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS, METRICS
 from .models import AnalysisPlan
 from .judge import (
@@ -53,15 +53,6 @@ class JudgeMessage(BaseModel):
     content: str = Field(min_length=1)
 
 
-class JudgeAttemptDiagnostic(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    attempt: int = Field(ge=1, le=10)
-    category: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z][A-Za-z0-9_.]*$")
-    message_bytes: int = Field(ge=0, le=1_000_000)
-    message_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-
 class CellRecord(BaseModel):
     """Strict terminal record for one planned arm/scenario/sample identity."""
 
@@ -85,8 +76,7 @@ class CellRecord(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     judge_messages: list[JudgeMessage] = Field(default_factory=list)
     verdict: JudgeVerdict | None = None
-    judge_attempts: list[JudgeAttemptDiagnostic] = Field(default_factory=list, max_length=10)
-    judge_consistency_fingerprint_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
 
     @field_validator("scores")
     @classmethod
@@ -331,13 +321,12 @@ def validate_equivalent_judgements(cells: list[dict]) -> None:
         vectors = {json.dumps(cell["scores"], sort_keys=True, separators=(",", ":")) for cell in members}
         if len(vectors) <= 1:
             continue
-        digest = sha256_bytes(fingerprint)
         for cell in members:
             cell["valid"] = False
             cell["pass"] = False
             cell["required_pass"] = False
             cell["invalid_reason"] = "equivalent_evidence_judge_inconsistency"
-            cell["judge_consistency_fingerprint_sha256"] = digest
+
 
 
 def _percentile(values: list[float], probability: float) -> float:

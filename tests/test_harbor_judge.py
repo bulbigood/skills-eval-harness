@@ -129,7 +129,7 @@ def test_equivalent_judge_inputs_with_different_scores_fail_closed() -> None:
     for cell in (first, second):
         assert cell["valid"] is False
         assert cell["invalid_reason"] == "equivalent_evidence_judge_inconsistency"
-        assert len(cell["judge_consistency_fingerprint_sha256"]) == 64
+
 
 
 def test_codex_and_claude_use_the_same_codex_threshold_map() -> None:

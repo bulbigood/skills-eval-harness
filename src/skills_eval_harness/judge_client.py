@@ -19,20 +19,13 @@ from .security import _read_private_auth
 T = TypeVar("T")
 
 
-def _retry_judge(
-    invoke: Callable[[], T],
-    *,
-    max_attempts: int,
-    on_failure: Callable[[int, Exception], None] | None = None,
-) -> T:
+def _retry_judge(invoke: Callable[[], T], *, max_attempts: int) -> T:
     if max_attempts < 1:
         raise ValueError("judge max_attempts must be positive")
     for attempt in range(1, max_attempts + 1):
         try:
             return invoke()
-        except Exception as error:
-            if on_failure is not None:
-                on_failure(attempt, error)
+        except Exception:
             if attempt == max_attempts:
                 raise
     raise AssertionError("unreachable")

@@ -540,7 +540,7 @@ def _execute_run(
         cells: list[dict] = []
         trials: list[tuple[dict, TrialResult, Path]] = []
 
-        def record_invalid(arm: dict, scenario_id: str, sample: int, reason: str, judge_attempts: list[dict] | None = None) -> None:
+        def record_invalid(arm: dict, scenario_id: str, sample: int, reason: str) -> None:
             cell = {
                 "arm": arm["id"],
                 "scenario_id": scenario_id,
@@ -553,8 +553,7 @@ def _execute_run(
                 "scores": {},
                 "wall_time_seconds": None,
             }
-            if judge_attempts:
-                cell["judge_attempts"] = judge_attempts
+
             cells.append(cell)
             atomic_write_json(run_root / "cells" / f"{arm['id']}--{scenario_id}--{sample}.json", cell)
 
@@ -603,22 +602,18 @@ def _execute_run(
             first_role = "treatment" if sample % 2 else "control"
             return scenario_id, sample, 0 if arm["role"] == first_role else 1
 
-        def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None, list[dict]]:
+        def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None]:
             arm, trial, job_dir = item
             arm_id = arm["id"]
             task_id = trial.task_name.removeprefix("iwe/")
             scenario_id, sample_text = task_id.rsplit("--sample-", 1)
             sample = int(sample_text)
             if trial.exception_info is not None:
-                return arm, scenario_id, sample, None, "trial_exception", []
+                return arm, scenario_id, sample, None, "trial_exception"
             try:
                 scenario_outcome, failures = trial_scenario_outcome(job_dir, trial)
             except (OSError, ValueError, json.JSONDecodeError):
-                return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed", []
-            judge_attempts: list[dict] = []
-            def record_judge_failure(attempt: int, error: Exception) -> None:
-                message = str(error).encode("utf-8")
-                judge_attempts.append({"attempt": attempt, "category": type(error).__name__, "message_bytes": len(message), "message_sha256": sha256_bytes(message)})
+                return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
                 verdict = _retry_judge(
@@ -630,10 +625,9 @@ def _execute_run(
                         auth_json=staged_judge_auth,
                     ),
                     max_attempts=config.judge.max_attempts,
-                    on_failure=record_judge_failure,
                 )
             except Exception:
-                return arm, scenario_id, sample, None, "judge_validation_failed", judge_attempts
+                return arm, scenario_id, sample, None, "judge_validation_failed"
             scores, passed, required = derive_cell_outcome(
                 verdict,
                 role=arm["role"],
@@ -668,16 +662,15 @@ def _execute_run(
                     scale={"minimum": 0, "maximum": 5},
                 ),
                 "verdict": verdict.model_dump(mode="json"),
-                "judge_attempts": judge_attempts,
             }
-            return arm, scenario_id, sample, cell, None, judge_attempts
+            return arm, scenario_id, sample, cell, None
 
         ordered_trials = sorted(trials, key=trial_identity)
-        for arm, scenario_id, sample, cell, invalid_reason, judge_attempts in _run_concurrently_in_order(
+        for arm, scenario_id, sample, cell, invalid_reason in _run_concurrently_in_order(
             ordered_trials, judge_concurrency, judge_trial
         ):
             if invalid_reason is not None:
-                record_invalid(arm, scenario_id, sample, invalid_reason, judge_attempts)
+                record_invalid(arm, scenario_id, sample, invalid_reason)
                 continue
             assert cell is not None
             cells.append(cell)
