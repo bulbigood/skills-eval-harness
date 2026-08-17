@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from harbor.models.job.result import JobResult, TrialResult
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .hashing import atomic_write_json, sha256_file
+from .hashing import atomic_write_json, sha256_bytes, sha256_file
 from .acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS, METRICS
 from .models import AnalysisPlan
 from .judge import (
@@ -31,6 +31,8 @@ EVIDENCE_KINDS: dict[str, EvidenceKind] = {
     "oracle": "oracle",
     "workspace": "workspace",
     "mechanical": "telemetry",
+    "postconditions": "oracle",
+    "fallback_attestation": "telemetry",
     "stdout": "telemetry",
     "stderr": "telemetry",
 }
@@ -49,6 +51,15 @@ class JudgeMessage(BaseModel):
 
     role: Literal["system", "user"]
     content: str = Field(min_length=1)
+
+
+class JudgeAttemptDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    attempt: int = Field(ge=1, le=10)
+    category: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z][A-Za-z0-9_.]*$")
+    message_bytes: int = Field(ge=0, le=1_000_000)
+    message_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class CellRecord(BaseModel):
@@ -74,6 +85,8 @@ class CellRecord(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     judge_messages: list[JudgeMessage] = Field(default_factory=list)
     verdict: JudgeVerdict | None = None
+    judge_attempts: list[JudgeAttemptDiagnostic] = Field(default_factory=list, max_length=10)
+    judge_consistency_fingerprint_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("scores")
     @classmethod
@@ -260,6 +273,8 @@ def trial_evidence(
         "oracle": root / "verifier/oracle.json",
         "workspace": root / "verifier/workspace-manifest.json",
         "mechanical": root / "verifier/mechanical.json",
+        "postconditions": root / "verifier/postconditions.json",
+        "fallback_attestation": root / "verifier/fallback-attestation.json",
         "stdout": root / "verifier/test-stdout.txt",
         "stderr": root / "verifier/test-stderr.txt",
     }
@@ -304,19 +319,25 @@ def _normalized_judge_input(cell: dict) -> bytes | None:
 
 
 def validate_equivalent_judgements(cells: list[dict]) -> None:
-    """Fail closed when equivalent judge inputs produce different score vectors."""
-    seen: dict[tuple[str, str, bytes], dict[str, float]] = {}
+    """Invalidate every member of an inconsistent equivalent-input cohort."""
+    groups: dict[tuple[str, str, bytes], list[dict]] = {}
     for cell in cells:
         if not cell.get("valid"):
             continue
         fingerprint = _normalized_judge_input(cell)
-        if fingerprint is None:
+        if fingerprint is not None:
+            groups.setdefault((cell["arm"], cell["scenario_id"], fingerprint), []).append(cell)
+    for (_, _, fingerprint), members in groups.items():
+        vectors = {json.dumps(cell["scores"], sort_keys=True, separators=(",", ":")) for cell in members}
+        if len(vectors) <= 1:
             continue
-        key = (cell["arm"], cell["scenario_id"], fingerprint)
-        scores = cell["scores"]
-        previous = seen.setdefault(key, scores)
-        if previous != scores:
-            raise ValueError("equivalent judge inputs produced inconsistent scores")
+        digest = sha256_bytes(fingerprint)
+        for cell in members:
+            cell["valid"] = False
+            cell["pass"] = False
+            cell["required_pass"] = False
+            cell["invalid_reason"] = "equivalent_evidence_judge_inconsistency"
+            cell["judge_consistency_fingerprint_sha256"] = digest
 
 
 def _percentile(values: list[float], probability: float) -> float:

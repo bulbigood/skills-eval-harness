@@ -6,9 +6,10 @@ import shutil
 from pathlib import Path
 from typing import Callable, cast
 
+import pytest
 from harbor.models.task.config import TaskConfig
 
-from skills_eval_harness.dataset import VERIFIER, generate_dataset
+from skills_eval_harness.dataset import VERIFIER, _materialize_runtime, generate_dataset
 from skills_eval_harness.hashing import sha256_tree
 from skills_eval_harness.models import load_config, load_suite
 
@@ -158,3 +159,14 @@ def test_pair_generation_is_byte_symmetric_except_arm_metadata(tmp_path: Path) -
     control = generate_dataset(root=tmp_path / "datasets", suite=suite, config=config, catalog_path=ROOT / "evals/scenarios/iwe.yaml", fixture_roots=fixtures, runtime=runtime, arm="no-skill")
     for relative in ("instruction.md", "environment/Dockerfile", "tests/Dockerfile", "tests/test.sh", "tests/verify.py"):
         assert (guided / "summarize-one-topic--sample-001" / relative).read_bytes() == (control / "summarize-one-topic--sample-001" / relative).read_bytes()
+
+
+def test_unavailable_runtime_is_deterministic(tmp_path: Path) -> None:
+    source = tmp_path / "iwe"
+    target = tmp_path / "bin" / "iwe"
+    source.write_bytes(b"real")
+    _materialize_runtime(source, target, "unavailable")
+    assert target.read_text() == "#!/bin/sh\nprintf '%s\\n' 'iwe: unavailable in this scenario' >&2\nexit 127\n"
+    assert target.stat().st_mode & 0o111
+    with pytest.raises(ValueError, match="unknown runtime mode"):
+        _materialize_runtime(source, target, "future")

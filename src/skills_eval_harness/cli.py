@@ -201,12 +201,12 @@ def prepare(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"refusing to reuse evaluation output directory: {output}")
     inputs = output / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
+    catalog = scenario_map(SCENARIOS)
     shutil.copy2(CONFIG, inputs / "config.yaml")
-    shutil.copy2(SCENARIOS, inputs / "scenario-catalog.yaml")
+    atomic_write_json(inputs / "scenario-catalog.yaml", {"schema_version": 2, "scenarios": list(catalog.values())})
     shutil.copy2(suite_path, inputs / "suite.yaml")
     shutil.copy2(FIXTURE_SOURCES, inputs / "fixture-sources.json")
     atomic_write_json(inputs / "effective-suite.json", suite.model_dump(mode="json"))
-    catalog = scenario_map(SCENARIOS)
     registry = load_fixture_sources(FIXTURE_SOURCES)
     required_fixtures = {catalog[scenario_id]["fixture"] for scenario_id in suite.scenarios}
     fixture_sources = validate_fixture_roots(fixtures, required_fixtures, FIXTURE_SOURCES)
@@ -540,7 +540,7 @@ def _execute_run(
         cells: list[dict] = []
         trials: list[tuple[dict, TrialResult, Path]] = []
 
-        def record_invalid(arm: dict, scenario_id: str, sample: int, reason: str) -> None:
+        def record_invalid(arm: dict, scenario_id: str, sample: int, reason: str, judge_attempts: list[dict] | None = None) -> None:
             cell = {
                 "arm": arm["id"],
                 "scenario_id": scenario_id,
@@ -553,6 +553,8 @@ def _execute_run(
                 "scores": {},
                 "wall_time_seconds": None,
             }
+            if judge_attempts:
+                cell["judge_attempts"] = judge_attempts
             cells.append(cell)
             atomic_write_json(run_root / "cells" / f"{arm['id']}--{scenario_id}--{sample}.json", cell)
 
@@ -601,18 +603,22 @@ def _execute_run(
             first_role = "treatment" if sample % 2 else "control"
             return scenario_id, sample, 0 if arm["role"] == first_role else 1
 
-        def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None]:
+        def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None, list[dict]]:
             arm, trial, job_dir = item
             arm_id = arm["id"]
             task_id = trial.task_name.removeprefix("iwe/")
             scenario_id, sample_text = task_id.rsplit("--sample-", 1)
             sample = int(sample_text)
             if trial.exception_info is not None:
-                return arm, scenario_id, sample, None, "trial_exception"
+                return arm, scenario_id, sample, None, "trial_exception", []
             try:
                 scenario_outcome, failures = trial_scenario_outcome(job_dir, trial)
             except (OSError, ValueError, json.JSONDecodeError):
-                return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
+                return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed", []
+            judge_attempts: list[dict] = []
+            def record_judge_failure(attempt: int, error: Exception) -> None:
+                message = str(error).encode("utf-8")
+                judge_attempts.append({"attempt": attempt, "category": type(error).__name__, "message_bytes": len(message), "message_sha256": sha256_bytes(message)})
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
                 verdict = _retry_judge(
@@ -624,9 +630,10 @@ def _execute_run(
                         auth_json=staged_judge_auth,
                     ),
                     max_attempts=config.judge.max_attempts,
+                    on_failure=record_judge_failure,
                 )
             except Exception:
-                return arm, scenario_id, sample, None, "judge_validation_failed"
+                return arm, scenario_id, sample, None, "judge_validation_failed", judge_attempts
             scores, passed, required = derive_cell_outcome(
                 verdict,
                 role=arm["role"],
@@ -661,15 +668,16 @@ def _execute_run(
                     scale={"minimum": 0, "maximum": 5},
                 ),
                 "verdict": verdict.model_dump(mode="json"),
+                "judge_attempts": judge_attempts,
             }
-            return arm, scenario_id, sample, cell, None
+            return arm, scenario_id, sample, cell, None, judge_attempts
 
         ordered_trials = sorted(trials, key=trial_identity)
-        for arm, scenario_id, sample, cell, invalid_reason in _run_concurrently_in_order(
+        for arm, scenario_id, sample, cell, invalid_reason, judge_attempts in _run_concurrently_in_order(
             ordered_trials, judge_concurrency, judge_trial
         ):
             if invalid_reason is not None:
-                record_invalid(arm, scenario_id, sample, invalid_reason)
+                record_invalid(arm, scenario_id, sample, invalid_reason, judge_attempts)
                 continue
             assert cell is not None
             cells.append(cell)
@@ -681,7 +689,7 @@ def _execute_run(
             for scenario_id in manifest["suite"]["scenarios"]
             for sample in range(1, manifest["samples"] + 1)
         }
-        write_summary(
+        summary = write_summary(
             run_root / "summary.json",
             cells,
             expected_identities,
@@ -696,6 +704,9 @@ def _execute_run(
             samples_per_identity=manifest["samples"],
             preregistered_samples=manifest["suite"]["default_samples"],
         )
+        for canonical_cell in summary.cells:
+            payload = canonical_cell.model_dump(mode="json", by_alias=True)
+            atomic_write_json(run_root / "cells" / f"{payload['arm']}--{payload['scenario_id']}--{payload['sample']}.json", payload)
         return None
 
 

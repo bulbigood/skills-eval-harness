@@ -7,11 +7,16 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import cast
 
 from harbor.models.task.config import TaskConfig
 
 from .hashing import atomic_write, canonical_json, sha256_file, sha256_tree
 from .models import HarnessConfig, Suite, load_yaml
+from .postconditions import ALLOWED_ASSERTIONS
+
+POSTCONDITIONS_SOURCE = Path(__file__).with_name("postconditions.py")
+ATTESTATIONS_SOURCE = Path(__file__).with_name("attestations.py")
 
 DEFAULT_HARD_TOOL_CALL_LIMIT = 8
 def _is_bounded_skill_load(action: str) -> bool:
@@ -31,6 +36,8 @@ _SKILL_LOAD_FUNCTION = inspect.getsource(_is_bounded_skill_load).replace(
 VERIFIER_TEMPLATE = r'''#!/usr/bin/env python3
 import hashlib, json, os
 from pathlib import Path
+from postconditions import evaluate_postconditions
+from attestations import fallback_attestation
 
 def tree(root):
     rows=[]
@@ -55,6 +62,7 @@ manifest=tree(workspace)
 before=json.loads(Path("/tests/before-tree.json").read_text(encoding="utf-8"))
 policy=json.loads(Path("/tests/policy.json").read_text(encoding="utf-8"))
 oracle=json.loads(Path("/tests/oracle.json").read_text(encoding="utf-8"))
+postconditions=json.loads(Path("/tests/postconditions.json").read_text(encoding="utf-8"))
 def collect_tools(value):
     if isinstance(value,dict):
         own=value.get("tool_calls",[]) if isinstance(value.get("tool_calls"),list) else []
@@ -96,6 +104,20 @@ if policy["read_only"] and not unchanged: failures.append("read-only scenario mo
 if policy["mutation_expected"] and unchanged: failures.append("mutation scenario left workspace unchanged")
 hard_max=policy.get("hard_max_task_tool_calls")
 if hard_max is not None and tool_calls>hard_max: failures.append("hard tool-call maximum exceeded")
+messages=[step["message"] for step in document["steps"] if isinstance(step,dict) and step.get("source")=="agent" and isinstance(step.get("message"),str) and step["message"].strip()]
+if not messages: raise ValueError("trajectory has no final assistant response")
+attestation_specs=[item for item in postconditions if item.get("type")=="targeted_fallback_read"]
+postconditions=[item for item in postconditions if item.get("type")!="targeted_fallback_read"]
+attestations=[]
+for spec in attestation_specs:
+    attestation=fallback_attestation(document,spec["path"])
+    attestations.append(attestation)
+    if not attestation["runtime_attempt_observed"]: failures.append("fallback runtime attempt not observed exactly once")
+    if not attestation["targeted_fallback_observed"]: failures.append("exact targeted fallback read not observed")
+    if attestation["unrelated_post_failure_tool_call_observed"]: failures.append("unrelated post-failure tool call observed")
+Path("/logs/verifier/fallback-attestation.json").write_text(json.dumps({"attestations":attestations},sort_keys=True,separators=(",",":")))
+postcondition_failures=evaluate_postconditions(root=workspace,before_rows=before,response=messages[-1],specs=postconditions)
+failures.extend(postcondition_failures)
 before_by_path={row["path"]:row for row in before}
 after_by_path={row["path"]:row for row in manifest}
 changed=[]
@@ -123,6 +145,7 @@ mechanical_payload={"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setu
 Path("/logs/verifier/oracle.json").write_text(json.dumps(oracle,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/workspace-manifest.json").write_text(json.dumps(workspace_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/mechanical.json").write_text(json.dumps(mechanical_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
+Path("/logs/verifier/postconditions.json").write_text(json.dumps({"failures":postcondition_failures,"passed":not postcondition_failures},sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/reward.json").write_text(json.dumps({"infrastructure":0.0 if failures else 1.0}),encoding="utf-8")
 '''
 VERIFIER = VERIFIER_TEMPLATE.replace("__SKILL_LOAD_FUNCTION__", _SKILL_LOAD_FUNCTION)
@@ -149,6 +172,17 @@ def _copy(source: Path, destination: Path) -> None:
             os.link(source, destination)
         except OSError:
             shutil.copy2(source, destination)
+
+
+def _materialize_runtime(source: Path, destination: Path, mode: str) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if mode == "available":
+        _copy(source, destination)
+    elif mode == "unavailable":
+        destination.write_text("#!/bin/sh\nprintf '%s\\n' 'iwe: unavailable in this scenario' >&2\nexit 127\n", encoding="utf-8")
+    else:
+        raise ValueError(f"unknown runtime mode: {mode!r}")
+    destination.chmod(0o755)
 
 def _tree_manifest(root: Path) -> list[dict[str, object]]:
     return [
@@ -216,6 +250,21 @@ def scenario_map(path: Path) -> dict[str, dict]:
     scenarios = {item["id"]: item for item in document["scenarios"]}
     if len(scenarios) != len(document["scenarios"]):
         raise ValueError("duplicate scenario IDs")
+    assertions_path = path.parent.parent / "postconditions" / path.name
+    assertions_document = cast(dict, load_yaml(assertions_path))
+    if assertions_document.get("schema_version") != 1 or not isinstance(assertions_document.get("scenarios"), list):
+        raise ValueError("postcondition catalog must use schema_version 1")
+    assertions = {item["id"]: item["assertions"] for item in assertions_document["scenarios"]}
+    if set(assertions) != set(scenarios):
+        raise ValueError("postcondition catalog scenario IDs differ from scenario catalog")
+    for scenario_id, scenario in scenarios.items():
+        specs = assertions[scenario_id]
+        if not isinstance(specs, list) or not specs:
+            raise ValueError(f"scenario {scenario_id} has no deterministic postconditions")
+        for spec in specs:
+            if not isinstance(spec, dict) or spec.get("type") not in ALLOWED_ASSERTIONS:
+                raise ValueError(f"scenario {scenario_id} has an unknown postcondition")
+        scenario["postconditions"] = specs
     return scenarios
 
 def task_toml(*, name: str, fixture: str, config: HarnessConfig, agent: str) -> str:
@@ -287,12 +336,15 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             _copy(fixture_root, task / "environment/payload/workspace")
             if agents_template is not None:
                 (task / "environment/payload/workspace/AGENTS.md").write_bytes(agents_template)
-            _copy(runtime, task / "environment/payload/usr/local/bin/iwe")
-            (task / "environment/payload/usr/local/bin/iwe").chmod(0o755)
+            runtime_mode = str((scenario.get("runtime") or {}).get("mode", "available"))
+            effective_runtime = task / "environment/payload/usr/local/bin/iwe"
+            _materialize_runtime(runtime, effective_runtime, runtime_mode)
             image = config.container.image
             (task / "environment/Dockerfile").write_text(agent_dockerfile(config), encoding="utf-8")
             (task / "tests/Dockerfile").write_text(f"FROM {image}\nCOPY . /tests/\n", encoding="utf-8")
             (task / "tests/verify.py").write_text(VERIFIER, encoding="utf-8")
+            _copy(POSTCONDITIONS_SOURCE, task / "tests/postconditions.py")
+            _copy(ATTESTATIONS_SOURCE, task / "tests/attestations.py")
             (task / "tests/test.sh").write_text(TEST_SH, encoding="utf-8")
             (task / "tests/test.sh").chmod(0o755)
             write_capability = any(str(capability).startswith("write.") for capability in scenario.get("capabilities", []))
@@ -315,10 +367,11 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
                 task / "tests/oracle.json",
                 canonical_json(_semantic_oracle(task / "environment/payload/workspace", scenario)),
             )
+            atomic_write(task / "tests/postconditions.json", canonical_json(scenario.get("postconditions", [])))
             (task / "instruction.md").write_text(f"Work offline.\n\nRequest:\n{scenario['request']}\n", encoding="utf-8")
             text = task_toml(name=task_id, fixture=fixture_name, config=config, agent=agent)
             TaskConfig.model_validate_toml(text)
             (task / "task.toml").write_text(text, encoding="utf-8")
-            manifest = {"protocol": "iwe-harbor-v1", "scenario_id": scenario_id, "sample": sample, "fixture_sha256": sha256_tree(fixture_root), "runtime_sha256": sha256_file(runtime)}
+            manifest = {"protocol": "iwe-harbor-v2", "scenario_id": scenario_id, "sample": sample, "fixture_sha256": sha256_tree(fixture_root), "runtime_mode": runtime_mode, "runtime_sha256": sha256_file(runtime), "effective_runtime_sha256": sha256_file(effective_runtime)}
             atomic_write(task / "manifest.json", canonical_json(manifest))
     return output
