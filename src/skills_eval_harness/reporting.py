@@ -54,7 +54,7 @@ def _identity(context: ReportContext) -> str:
     evidence = f"[`run-seal.json`]({_link(context.publication.evidence_link)})" if context.publication.evidence_link else "not staged with this report"
     return "\n".join((
         "## Report identity", "",
-        f"- Run ID: `{_escape(context.identity.run_id)}`", f"- Report revision: `{_escape(context.identity.report_revision)}`",
+        f"- Run ID: `{_escape(context.identity.run_id)}`", f"- Publication revision: `{_escape(context.identity.report_revision)}`",
         f"- Suite: `{_escape(context.identity.suite_id)}` (`{context.identity.suite_kind}`)", "- Summary schema: `5`",
         f"- Run purpose: `{_escape(context.identity.run_purpose)}`",
         f"- Report checksum: [`{_escape(context.publication.checksum_name)}`]({_link(context.publication.checksum_name)})",
@@ -90,17 +90,29 @@ def _key_results(context: ReportContext) -> str:
             f"- Common-valid pairs: `{reliability.common_valid_pairs}` / "
             f"`{reliability.planned_pairs}`."
         )
-    blockers = [item for item in summary.acceptance.criteria if not item.pass_]
-    if blockers:
+    blockers = [c for c in context.summary.acceptance.criteria if not c.pass_]
+    if blockers and context.identity.suite_kind == "absolute":
+        scenarios = len({c.scenario_id for c in blockers})
+        lines.append(f"- Acceptance blockers: `{scenarios}` scenarios / `{len(blockers)}` criteria.")
+    elif blockers:
         lines.append("- Acceptance blockers:")
-        lines.extend(
-            f"  - `{_escape(item.arm)} / {_escape(item.scenario_id)} / "
-            f"{_escape(item.dimension)}`: `{item.passed_samples}/{item.total_samples}` "
-            f"({item.observed_pass_rate:.0%}) < required `{item.required_pass_rate:.0%}`."
-            for item in blockers
-        )
+        for criterion in blockers:
+            lines.append(
+                f"  - `{_escape(criterion.arm)} / {_escape(criterion.scenario_id)} / {_escape(criterion.dimension)}`: "
+                f"`{criterion.passed_samples}/{criterion.total_samples}` ({criterion.observed_pass_rate:.0%}) "
+                f"< required `{criterion.required_pass_rate:.0%}`."
+            )
     else:
         lines.append("- Acceptance blockers: none.")
+    if context.identity.suite_kind == "absolute":
+        overall = summary.statistics.available_valid["overall"]
+        arm = next(iter(overall.values()))
+        scores = arm["scores"]
+        lines.append("- Overall score means:")
+        lines.append("  - " + "; ".join(
+            f"{name.replace('_', ' ')}: `{_fmt(scores[name]['mean'])}`"
+            for name in PRESENTATION_SCORES if name in scores
+        ) + ".")
     if context.identity.suite_kind == "paired":
         paired = summary.statistics.common_valid_paired["overall"]
         scores = paired["score_delta_treatment_minus_control"]
@@ -132,12 +144,11 @@ def _configuration(context: ReportContext) -> str:
     for arm in sorted(context.identity.arms, key=lambda item: item["id"]):
         skill = f"{context.provenance.skill_name} v{context.provenance.skill_version}" if arm["skill"] else "none"
         lines.append(f"| `{_escape(arm['id'])}` | `{_escape(arm['role'] or 'absolute')}` | {_escape(skill)} | `{_escape(context.execution.agent_name)} {_escape(context.execution.agent_version)}` | `{_escape(context.execution.worker_model)} (reasoning: {_escape(context.execution.worker_reasoning)})` |")
-    lines += ["", "### Judge configuration", "", f"- Backend: `{_escape(context.execution.judge_backend)}`", f"- Model: `{_escape(context.execution.judge_model)}`", f"- Reasoning: `{_escape(context.execution.judge_reasoning)}`", "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`", "", f"Runtime: `{_escape(context.execution.runtime_version)}` (`{context.execution.runtime_sha256}`). Worker image: `{context.execution.agent_image_sha256}`. Verifier image: `{context.execution.verifier_image_sha256}`. Harbor: `{_escape(context.execution.harbor_version)}`. Node: `{_escape(context.execution.node_version)}`."]
+    lines += ["", "### Judge configuration", "", f"- Backend: `{_escape(context.execution.judge_backend)}`", f"- Model: `{_escape(context.execution.judge_model)}`", f"- Reasoning: `{_escape(context.execution.judge_reasoning)}`", "- Dimensions: `skill_compliance`, `task_correctness`, `scenario_compliance`, `safety`, `evidence_quality`, `tool_efficiency`, `resource_efficiency`", "", f"Runtime: `IWE {_escape(context.execution.runtime_version)}` (`{context.execution.runtime_sha256}`). Worker image: `{context.execution.agent_image_sha256}`. Verifier image: `{context.execution.verifier_image_sha256}`. Harbor: `{_escape(context.execution.harbor_version)}`. Node: `{_escape(context.execution.node_version)}`."]
     return "\n".join(lines)
 
 
 def _provenance(context: ReportContext) -> str:
-    task_json = json.dumps(context.provenance.task_checksums, sort_keys=True, indent=2)
     task_digest = hashlib.sha256(
         json.dumps(
             context.provenance.task_checksums,
@@ -152,9 +163,7 @@ def _provenance(context: ReportContext) -> str:
         f"- Selected skill: `{_escape(context.provenance.skill_name)}` v`{_escape(context.provenance.skill_version)}`, tree `{context.provenance.skill_sha256}`",
         f"- Config / suite / catalog: `{context.provenance.config_sha256}` / `{context.provenance.suite_sha256}` / `{context.provenance.catalog_sha256}`",
         f"- Effective suite / fixture registry: `{context.provenance.effective_suite_sha256}` / `{context.provenance.fixture_registry_sha256}`",
-        f"- Task identities: `{len(context.provenance.task_checksums)}` entries; canonical map SHA-256 `{task_digest}`.",
-        "", "<details>", "<summary>Complete task identity map</summary>", "",
-        "```json", task_json, "```", "", "</details>",
+        f"- Task identities: `{len(context.provenance.task_checksums)}` entries; canonical map SHA-256 `{task_digest}`. The complete map remains in the sealed bundle.",
     ))
 
 
@@ -165,9 +174,14 @@ def _acceptance(summary: SummaryV5) -> str:
         if name not in acceptance.score_thresholds:
             continue
         lines.append(f"| `{name}` | {acceptance.score_thresholds[name]} | {acceptance.sample_pass_rate_thresholds[name]:.0%} |")
-    lines += ["", "### Acceptance ledger", "", "| Arm | Scenario | Dimension | Passed | Observed | Required | Result |", "|---|---|---|---:|---:|---:|---|"]
-    for row in sorted(acceptance.criteria, key=lambda item: (item.arm, item.scenario_id, PRESENTATION_INDEX[item.dimension])):
+    rows = list(acceptance.criteria)
+    if summary.analysis.kind == "absolute":
+        rows = [row for row in rows if not row.pass_]
+    lines += ["", "### Failed acceptance criteria" if summary.analysis.kind == "absolute" else "### Acceptance ledger", "", "| Arm | Scenario | Dimension | Passed | Observed | Required | Result |", "|---|---|---|---:|---:|---:|---|"]
+    for row in sorted(rows, key=lambda item: (item.arm, item.scenario_id, PRESENTATION_INDEX[item.dimension])):
         lines.append(f"| `{_escape(row.arm)}` | `{_escape(row.scenario_id)}` | `{_escape(row.dimension)}` | {row.passed_samples} / {row.total_samples} | {row.observed_pass_rate:.0%} | {row.required_pass_rate:.0%} | {'PASS' if row.pass_ else '**FAIL**'} |")
+    if not rows:
+        lines.append("| — | — | — | — | — | — | None |")
     lines += ["", "The suite passes only when evidence is valid and every applicable criterion passes. Control arms are acceptance-blocking only for safety."]
     return "\n".join(lines)
 
@@ -186,11 +200,13 @@ def _distribution_rows(groups: dict[str, Any], label: str) -> list[str]:
 
 def _descriptive(context: ReportContext) -> str:
     available = context.summary.statistics.available_valid
-    lines = ["## Descriptive results", "", *_distribution_rows({"overall": available["overall"]}, "Overall"), "", *_distribution_rows(available["per_scenario"], "Per scenario"), "", *_distribution_rows(available["per_family"], "Per family")]
+    lines = ["## Descriptive results", "", *_distribution_rows({"overall": available["overall"]}, "Overall")]
+    if context.identity.suite_kind == "paired":
+        lines += ["", *_distribution_rows(available["per_scenario"], "Per scenario")]
     if context.identity.suite_kind == "paired":
         paired = context.summary.statistics.common_valid_paired
         lines += ["", "### Common-valid paired cohorts and treatment-minus-control deltas", "", "All deltas are treatment minus control. Positive score deltas are better; negative resource deltas are better.", "", "| Group | Measure | Mean delta | n |", "|---|---|---:|---:|"]
-        for scope, groups in (("overall", {"overall": paired["overall"]}), ("scenario", paired["per_scenario"]), ("family", paired["per_family"])):
+        for scope, groups in (("overall", {"overall": paired["overall"]}), ("scenario", paired["per_scenario"])):
             for name, group in sorted(groups.items()):
                 deltas = {**group["score_delta_treatment_minus_control"], **group["metric_delta_treatment_minus_control"]}
                 for measure in PRESENTATION_MEASURES:
@@ -209,8 +225,39 @@ def _failures(context: ReportContext) -> str:
     lines = ["## Failures and reliability", "", "### Deterministic benchmark failures", ""]
     lines.append("None." if not deterministic else "\n".join(f"- `{_escape(c.arm)}/{_escape(c.scenario_id)}/{c.sample}`: {_escape('; '.join(c.scenario_failures))}" for c in deterministic))
     lines += ["", "### Invalid or unavailable evidence", "", "None." if not invalid else "\n".join(f"- `{_escape(c.arm)}/{_escape(c.scenario_id)}/{c.sample}`: `{_escape(c.invalid_reason)}`" for c in invalid)]
+    judged = []
+    for cell in cells:
+        below = [
+            name for name, threshold in context.summary.acceptance.score_thresholds.items()
+            if cell.valid and cell.scores.get(name) is not None and cell.scores[name] < threshold
+        ]
+        if below:
+            judged.append((cell, below))
+    judged.sort(key=lambda item: (item[0].arm, item[0].scenario_id, item[0].sample))
+    lines += ["", "### Below-threshold judge scores", ""]
+    if not judged:
+        lines.append("None.")
+    else:
+        for cell, below in judged:
+            scores = "; ".join(
+                f"`{name}` `{_fmt(cell.scores[name])}/{context.summary.acceptance.score_thresholds[name]}`"
+                for name in PRESENTATION_SCORES if name in below
+            )
+            lines.append(f"- `{_escape(cell.arm)}/{_escape(cell.scenario_id)}/{cell.sample}`: {scores}.")
     reliability = summary.reliability
-    lines += ["", "### Reliability and missingness", "", f"- Planned / observed / valid cells: `{summary.expected_cells}` / `{summary.observed_cells}` / `{sum(reliability.valid_cells_by_arm.values())}`.", f"- Deterministic failures by arm: `{json.dumps(reliability.scenario_failures_by_arm, sort_keys=True)}`.", "- Deterministic outcome is the verifier's mechanical/postcondition gate; semantic task quality remains represented by the independently judged dimensions.", f"- Missingness by scenario: `{json.dumps(reliability.missingness_by_scenario, sort_keys=True)}`.", f"- Missingness by family: `{json.dumps(reliability.missingness_by_family, sort_keys=True)}`."]
+    invalid_count = summary.observed_cells - sum(reliability.valid_cells_by_arm.values())
+    lines += ["", "### Reliability and missingness", "", f"- Planned / observed / valid cells: `{summary.expected_cells}` / `{summary.observed_cells}` / `{sum(reliability.valid_cells_by_arm.values())}`.", f"- Invalid cells: `{invalid_count}`.", f"- Deterministic failures by arm: `{json.dumps(reliability.scenario_failures_by_arm, sort_keys=True)}`.", "- Deterministic outcome is the verifier's mechanical/postcondition gate; semantic task quality remains represented by the independently judged dimensions."]
+    affected = {
+        scenario: item for scenario, item in reliability.missingness_by_scenario.items()
+        if item["invalid"] or item["valid"] < item["planned"]
+    }
+    if affected:
+        lines.append("- Scenarios with invalid or missing cells:")
+        for scenario, item in sorted(affected.items()):
+            lines.append(
+                f"  - `{_escape(scenario)}`: planned `{item['planned']}`, valid `{item['valid']}`, "
+                f"invalid `{item['invalid']}`; reasons `{json.dumps(item['invalid_reasons'], sort_keys=True)}`."
+            )
     if context.identity.suite_kind == "paired":
         lines += [f"- Common-valid pairs: `{reliability.common_valid_pairs}` / `{reliability.planned_pairs}`.", f"- Excluded pairs: `{json.dumps(reliability.excluded_pairs, sort_keys=True)}`."]
     return "\n".join(lines)
@@ -226,17 +273,12 @@ def _timing(summary: SummaryV5) -> str:
 
 
 def _audit(context: ReportContext) -> str:
-    summary = context.summary.model_dump(mode="json", by_alias=True)
-    payload = {key: summary[key] for key in ("schema_version", "analysis", "evaluation_status", "acceptance", "reliability", "statistics", "timing", "measurement_scope", "interpretation")}
-    encoded = json.dumps(_without_medians(payload), ensure_ascii=False, sort_keys=True, indent=2)
-    fence = "`" * (max((len(run) for run in re.findall(r"`+", encoded)), default=2) + 1)
     return "\n".join((
         "## Audit appendix", "",
         "Cell-level evidence is retained in the source bundle's sealed publishable-evidence scope "
         "but is not included in this publication. The seal covers the evidence consumed by bundle "
-        "validation and report generation, not transient raw Harbor operational files.", "",
-        "<details>", "<summary>Complete sanitized summary JSON</summary>", "",
-        f"{fence}json", encoded, fence, "", "</details>",
+        "validation and report generation, not transient raw Harbor operational files. Complete "
+        "machine-readable statistics remain available in the sealed summary JSON.",
     ))
 
 

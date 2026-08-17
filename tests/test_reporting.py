@@ -148,7 +148,10 @@ def test_common_contract_is_shared_by_absolute_and_paired() -> None:
         )
         assert "skill_compliance" in report
         assert "## Key results" in report
-        assert "<summary>Complete task identity map</summary>" in report
+        assert "The complete map remains in the sealed bundle." in report
+        assert "<summary>Complete task identity map</summary>" not in report
+        assert "### Per family" not in report
+        assert "Complete sanitized summary JSON" not in report
         assert "canonical map SHA-256" in report
         assert "Deterministic outcome is the verifier's mechanical/postcondition gate" in report
         assert "model\\|unsafe (reasoning: medium)" in report
@@ -204,9 +207,8 @@ def test_audit_fence_cannot_be_closed_by_untrusted_backticks() -> None:
     audit = report.split("## Audit appendix", 1)[1].split(
         "## Sanitized device telemetry", 1
     )[0]
-    assert "````json" in audit
-    assert "````\n\n</details>" in audit
-    assert "<summary>Complete sanitized summary JSON</summary>" in audit
+    assert "Complete machine-readable statistics remain available in the sealed summary JSON." in audit
+    assert "```injected" not in audit
     assert "transient raw Harbor operational files" in audit
 
 
@@ -271,7 +273,8 @@ def test_nonempty_failure_ledger_distinguishes_failure_invalid_missing_and_exclu
     report = render_report(model.model_copy(update={"summary": summary}))
     assert "`skill/one/1`: deterministic verifier failure" in report
     assert "`no-skill/one/2`: `trial_exception`" in report
-    assert 'Missingness by scenario: `{"one":' in report
+    assert "Scenarios with invalid or missing cells:" in report
+    assert "`one`: planned `4`, valid `3`, invalid `1`" in report
     assert "Excluded pairs:" in report and "no-skill" in report and "skill" in report
 
 

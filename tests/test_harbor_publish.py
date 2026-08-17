@@ -394,7 +394,7 @@ def test_publisher_defaults_to_report_without_evidence(
     text = output.read_text()
     assert text.startswith("# Evaluation report\n")
     assert "- Run ID: `canonical-production-run`" in text
-    assert "- Report revision: `unversioned`" in text
+    assert "- Publication revision: `unversioned`" in text
     assert "Suite acceptance: **PASS**" in text
     assert "https://github.com/bulbigood/skills-eval-harness" in text
     assert "Sealed evidence: not staged with this report" in text
@@ -402,6 +402,10 @@ def test_publisher_defaults_to_report_without_evidence(
     assert '\n  "cpu_percent_max":' in text
     assert '"p50"' not in text
     assert "median" not in text.lower()
+    assert "### Per family" not in text
+    assert "Complete sanitized summary JSON" not in text
+    assert "Complete task identity map" not in text
+    assert "Runtime: `IWE " in text
     assert output.with_suffix(".md.sha256").is_file()
     assert not output.with_suffix(".evidence").exists()
     staged = subprocess.run(
