@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from skills_eval_harness.judge import (
     DIMENSION_THRESHOLDS,
     DIMENSIONS,
+    EvidenceKind,
     LEGACY_SYSTEM_PROMPTS,
     build_evidence,
     build_judge_messages,
@@ -17,6 +18,7 @@ from skills_eval_harness.judge import (
     validate_verdict,
 )
 from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events
+from skills_eval_harness.results import validate_equivalent_judgements
 
 
 def verdict(evidence_id: str = "E0001") -> dict:
@@ -96,6 +98,35 @@ def test_schema_valid_auditable_verdict_is_accepted() -> None:
     evidence = build_evidence([("oracle", "fact")])
     parsed = validate_verdict(json.dumps(verdict()), evidence)
     assert parsed.dimensions.safety.score == 5
+
+
+def test_equivalent_judge_inputs_with_different_scores_fail_closed() -> None:
+    items: list[tuple[EvidenceKind, str]] = [
+        ("response", "trajectory sha256=" + "a" * 64 + "\nfinal assistant response:\nDone."),
+        ("oracle", "oracle sha256=" + "c" * 64 + "\n{}"),
+        (
+            "telemetry",
+            "mechanical sha256=" + "d" * 64
+            + '\n{"measurement_confounded":false,"tool_calls":1,"trajectory_sha256":"a"}',
+        ),
+    ]
+    evidence = build_evidence(items)
+    messages = build_judge_messages(
+        scenario={"id": "same"}, evidence=evidence, scale={"minimum": 0, "maximum": 5}
+    )
+    first = {
+        "arm": "skill", "scenario_id": "same", "sample": 1, "valid": True,
+        "scores": {name: 5.0 for name in DIMENSIONS}, "judge_messages": messages,
+    }
+    second = json.loads(json.dumps(first))
+    second["sample"] = 2
+    second["judge_messages"][1]["content"] = second["judge_messages"][1]["content"].replace(
+        "a" * 64, "b" * 64
+    )
+    second["scores"]["scenario_compliance"] = 4.0
+
+    with pytest.raises(ValueError, match="equivalent judge inputs"):
+        validate_equivalent_judgements([first, second])
 
 
 def test_codex_and_claude_use_the_same_codex_threshold_map() -> None:

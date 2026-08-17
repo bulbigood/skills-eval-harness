@@ -70,6 +70,11 @@ def is_skill_load(call):
     if not isinstance(call,dict) or call.get("function_name") != "exec": return False
     arguments=call.get("arguments")
     return isinstance(arguments,dict) and set(arguments)=={"input"} and isinstance(arguments["input"],str) and skill_load(arguments["input"])
+def confounded_skill_load(call):
+    if not isinstance(call,dict) or call.get("function_name") != "exec" or is_skill_load(call): return False
+    arguments=call.get("arguments")
+    action=arguments.get("input") if isinstance(arguments,dict) else None
+    return isinstance(action,str) and "/root/.agents/skills/" in action and "SKILL.md" in action
 def task_output_bytes(document):
     return sum(
         len(json.dumps(step.get("observation"),ensure_ascii=False,sort_keys=True).encode("utf-8"))
@@ -80,6 +85,7 @@ all_tool_calls=collect_tools(document)
 setup_tool_calls=sum(is_skill_load(call) for call in all_tool_calls)
 tool_calls=len(all_tool_calls)-setup_tool_calls
 task_tool_output_bytes=task_output_bytes(document)
+measurement_confounded=any(confounded_skill_load(call) for call in all_tool_calls)
 unchanged=manifest==before
 failures=[]
 if policy["read_only"] and not unchanged: failures.append("read-only scenario modified workspace")
@@ -109,7 +115,7 @@ for path in sorted(set(before_by_path)|set(after_by_path)):
             text_budget-=len(excerpt)
     changed.append(item)
 workspace_payload={"workspace":manifest,"baseline_unchanged":unchanged,"changes":changed}
-mechanical_payload={"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"task_tool_output_bytes":task_tool_output_bytes,"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
+mechanical_payload={"baseline_unchanged":unchanged,"tool_calls":tool_calls,"setup_tool_calls":setup_tool_calls,"total_tool_calls":len(all_tool_calls),"task_tool_output_bytes":task_tool_output_bytes,"measurement_confounded":measurement_confounded,"failures":failures,"trajectory_sha256":hashlib.sha256(trajectory.read_bytes()).hexdigest()}
 Path("/logs/verifier/oracle.json").write_text(json.dumps(oracle,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/workspace-manifest.json").write_text(json.dumps(workspace_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")
 Path("/logs/verifier/mechanical.json").write_text(json.dumps(mechanical_payload,sort_keys=True,separators=(",",":")),encoding="utf-8")

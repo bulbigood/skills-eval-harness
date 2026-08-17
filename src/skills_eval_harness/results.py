@@ -266,8 +266,57 @@ def trial_evidence(
     for name, path in paths.items():
         if path.is_file():
             text = path.read_text(encoding="utf-8", errors="replace")
+            if name == "mechanical":
+                mechanical = json.loads(text)
+                if mechanical.get("measurement_confounded") is True:
+                    raise ValueError("task efficiency measurement is confounded with setup output")
             evidence.append((EVIDENCE_KINDS[name], f"{name} sha256={sha256_file(path)}\n{text[:8000]}"))
     return evidence
+
+
+def _normalized_judge_input(cell: dict) -> bytes | None:
+    messages = cell.get("judge_messages")
+    if not isinstance(messages, list) or len(messages) != 2:
+        raise ValueError("valid cell has malformed judge messages")
+    try:
+        envelope = json.loads(messages[1]["content"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(envelope, dict) or envelope.get("protocol") != "iwe-harbor-judge-v1":
+        return None
+    current_mechanical_protocol = False
+    for item in envelope.get("evidence", []):
+        text = item.get("text")
+        if not isinstance(text, str):
+            continue
+        if item.get("kind") == "response" and text.startswith("trajectory sha256=") and "\n" in text:
+            item["text"] = text.split("\n", 1)[1]
+        elif re.match(r"^(oracle|workspace|mechanical) sha256=[0-9a-f]+\n", text):
+            item["text"] = text.split("\n", 1)[1]
+            if text.startswith("mechanical sha256="):
+                payload = json.loads(item["text"])
+                current_mechanical_protocol = "measurement_confounded" in payload
+                payload.pop("trajectory_sha256", None)
+                item["text"] = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if not current_mechanical_protocol:
+        return None
+    return json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def validate_equivalent_judgements(cells: list[dict]) -> None:
+    """Fail closed when equivalent judge inputs produce different score vectors."""
+    seen: dict[tuple[str, str, bytes], dict[str, float]] = {}
+    for cell in cells:
+        if not cell.get("valid"):
+            continue
+        fingerprint = _normalized_judge_input(cell)
+        if fingerprint is None:
+            continue
+        key = (cell["arm"], cell["scenario_id"], fingerprint)
+        scores = cell["scores"]
+        previous = seen.setdefault(key, scores)
+        if previous != scores:
+            raise ValueError("equivalent judge inputs produced inconsistent scores")
 
 
 def _percentile(values: list[float], probability: float) -> float:
@@ -523,6 +572,7 @@ def summarize_cells(
     samples_per_identity: int | None = None,
     preregistered_samples: int | None = None,
 ) -> "SummaryV5":
+    validate_equivalent_judgements(cells)
     cohort = _validate_summary_cohort(
         cells, expected_identities, expected_families=expected_families,
         analysis=analysis, pipeline_elapsed_seconds=pipeline_elapsed_seconds,

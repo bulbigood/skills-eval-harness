@@ -101,9 +101,9 @@ def test_skill_load_classifier_excludes_only_the_bounded_skill_read() -> None:
     assert not classifier_fn(compound)
 
 
-def test_generated_verifier_measures_task_observation_bytes() -> None:
+def test_generated_verifier_measures_task_observation_bytes_and_flags_confounded_setup() -> None:
     tree = ast.parse(VERIFIER)
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {"skill_load", "is_skill_load", "task_output_bytes"}]
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {"skill_load", "is_skill_load", "confounded_skill_load", "task_output_bytes"}]
     namespace: dict[str, object] = {"json": json}
     exec(compile(ast.Module(body=functions, type_ignores=[]), "<verifier-bytes>", "exec"), namespace)
     task_call = {"function_name": "exec", "arguments": {"input": "read task"}}
@@ -114,6 +114,12 @@ def test_generated_verifier_measures_task_observation_bytes() -> None:
     ]}
     expected = len(json.dumps(document["steps"][0]["observation"], ensure_ascii=False, sort_keys=True).encode("utf-8"))
     assert namespace["task_output_bytes"](document) == expected
+    compound = {
+        "function_name": "exec",
+        "arguments": {"input": "read /root/.agents/skills/demo/SKILL.md && inspect workspace"},
+    }
+    confounded = cast(Callable[[dict[str, object]], bool], namespace["confounded_skill_load"])
+    assert confounded(compound)
 
 
 def test_generated_verifier_excludes_generated_workspace_noise(tmp_path: Path) -> None:

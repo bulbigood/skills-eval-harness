@@ -229,6 +229,21 @@ def test_command_evidence_rejects_non_whitespace_control_characters(tmp_path: Pa
         trial_evidence(tmp_path, "trial")
 
 
+def test_trial_evidence_rejects_confounded_setup_measurement(tmp_path: Path) -> None:
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    (trial / "agent/trajectory.json").write_text(
+        json.dumps({"steps": [{"source": "agent", "message": "done"}]})
+    )
+    (trial / "verifier/mechanical.json").write_text(
+        json.dumps({"measurement_confounded": True})
+    )
+
+    with pytest.raises(ValueError, match="confounded with setup output"):
+        trial_evidence(tmp_path, "trial")
+
+
 def test_cell_schema_rejects_coercion_out_of_range_scores_and_boolean_metrics() -> None:
     mutations = (
         ("sample", 1.0),
