@@ -85,6 +85,11 @@ def invalid_cell(arm: str, sample: int, reason: str = "judge_validation_failed")
     }
 
 
+@pytest.mark.parametrize("reason", ["measurement_confounded", "equivalent_evidence_judge_inconsistency"])
+def test_emitted_invalid_reasons_satisfy_cell_contract(reason: str) -> None:
+    assert CellRecord.model_validate(invalid_cell("skill", 1, reason)).invalid_reason == reason
+
+
 def test_exact_identity_matrix_rejects_missing_unexpected_and_duplicate_cells() -> None:
     expected = {("skill", "one", 1)}
     assert summarize_cells([valid_cell("skill", 1)], expected).pass_ is True

@@ -47,6 +47,8 @@ INVALID_REASONS = {
     "trial_exception",
     "deterministic_verifier_failed",
     "judge_validation_failed",
+    "measurement_confounded",
+    "equivalent_evidence_judge_inconsistency",
 }
 
 
