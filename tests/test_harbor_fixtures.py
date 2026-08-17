@@ -81,6 +81,14 @@ def test_fixture_variants_materialize_required_baselines(
         referrer = (destination / "graph/core-referrer.md").read_text()
         assert "[Core Old](core-old.md)" in referrer
         assert "[Core Delete](core-delete.md)" in referrer
+    if fixture_name == "pkm-demo-schema":
+        config = (destination / ".iwe/config.toml").read_text()
+        assert "[templates.meeting]" in config
+        assert 'key_template = "meetings/{{slug}}"' in config
+        assert "Attendees: {{ attendees }}" in config
+        assert "required: [type, draft]" in (
+            destination / ".iwe/schemas/meeting.yaml"
+        ).read_text()
 
 
 def test_unknown_fixture_variant_fails_closed(tmp_path: Path) -> None:

@@ -119,10 +119,18 @@ def _materialize_update(root: Path) -> None:
 
 
 def _materialize_schema(root: Path) -> None:
-    _write(root, ".iwe/templates/meeting.md", "---\ntype: meeting\nattendees: {{ attendees }}\ndraft: {{ draft }}\n---\n# {{ title }}\n\n{{ body }}\n")
-    _write(root, ".iwe/schemas/meeting.yaml", "$schema: https://document-schema.org/draft/2026-06/schema\nfrontmatter:\n  type: object\n  required: [type, attendees, draft]\n  properties:\n    type: { const: meeting }\n    attendees: { type: string }\n    draft: { type: boolean }\n")
+    meeting_template = "# {{ title }}\n\nAttendees: {{ attendees }}\n\n{{ body }}\n"
+    _write(root, ".iwe/templates/meeting.md", meeting_template)
+    _write(root, ".iwe/schemas/meeting.yaml", "$schema: https://document-schema.org/draft/2026-06/schema\nfrontmatter:\n  type: object\n  required: [type, draft]\n  properties:\n    type: { const: meeting }\n    attendees: { type: string }\n    draft: { type: boolean }\n")
     config = root / ".iwe/config.toml"
-    config.write_text(config.read_text(encoding="utf-8") + '\n[schemas.meeting]\nmatch = "meetings/*"\n', encoding="utf-8")
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + '\n[templates.meeting]\ndocument_template = """\n'
+        + meeting_template
+        + '"""\nkey_template = "meetings/{{slug}}"\n'
+        + '\n[schemas.meeting]\nmatch = "meetings/*"\n',
+        encoding="utf-8",
+    )
 
 
 def _materialize_extract_inline(root: Path) -> None:
