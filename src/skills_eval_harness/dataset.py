@@ -74,7 +74,11 @@ def confounded_skill_load(call):
     if not isinstance(call,dict) or call.get("function_name") != "exec" or is_skill_load(call): return False
     arguments=call.get("arguments")
     action=arguments.get("input") if isinstance(arguments,dict) else None
-    return isinstance(action,str) and "/root/.agents/skills/" in action and "SKILL.md" in action
+    if not isinstance(action,str): return False
+    for separator in ("&&",";","\n"):
+        setup, found, task = action.partition(separator)
+        if found and task.strip() and skill_load(setup.strip()): return True
+    return False
 def task_output_bytes(document):
     return sum(
         len(json.dumps(step.get("observation"),ensure_ascii=False,sort_keys=True).encode("utf-8"))

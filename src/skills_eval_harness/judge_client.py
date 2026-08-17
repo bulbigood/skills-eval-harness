@@ -7,13 +7,28 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, TypeVar, cast
 
 from openai import OpenAI
 
 from .judge import Evidence, JudgeVerdict, build_judge_messages, validate_verdict
 from .models import HarnessConfig
 from .security import _read_private_auth
+
+
+T = TypeVar("T")
+
+
+def _retry_judge(invoke: Callable[[], T], *, max_attempts: int) -> T:
+    if max_attempts < 1:
+        raise ValueError("judge max_attempts must be positive")
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return invoke()
+        except Exception:
+            if attempt == max_attempts:
+                raise
+    raise AssertionError("unreachable")
 
 
 def _judge_prompt(*, scenario: dict, evidence: tuple[Evidence, ...]) -> str:

@@ -17,7 +17,7 @@ from skills_eval_harness.judge import (
     judge_messages_match,
     validate_verdict,
 )
-from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events
+from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events, _retry_judge
 from skills_eval_harness.results import validate_equivalent_judgements
 
 
@@ -201,3 +201,33 @@ def test_subscription_judge_rejects_tool_use_and_malformed_jsonl() -> None:
         _reject_tool_events(json.dumps({"type": "item.completed"}))
     with pytest.raises(ValueError, match="tool use"):
         _reject_tool_events(json.dumps({"type": "item.started", "item": {"type": "web_search"}}))
+
+
+def test_judge_retry_accepts_first_valid_result_without_rescoring() -> None:
+    attempts = 0
+
+    def invoke() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ValueError("invalid structured verdict")
+        return "valid"
+
+    assert _retry_judge(invoke, max_attempts=3) == "valid"
+    assert attempts == 3
+
+
+def test_judge_retry_is_bounded_and_does_not_catch_interrupts() -> None:
+    attempts = 0
+
+    def invalid() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("invalid structured verdict")
+
+    with pytest.raises(ValueError, match="invalid structured verdict"):
+        _retry_judge(invalid, max_attempts=2)
+    assert attempts == 2
+
+    with pytest.raises(KeyboardInterrupt):
+        _retry_judge(lambda: (_ for _ in ()).throw(KeyboardInterrupt()), max_attempts=3)

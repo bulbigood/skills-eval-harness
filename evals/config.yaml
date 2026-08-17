@@ -41,6 +41,7 @@ judge:
   reasoning: low
   timeout_seconds: 300
   concurrency: 4
+  max_attempts: 3
 execution:
   timeout_seconds: 1800
   global_concurrency: 2

@@ -116,10 +116,16 @@ def test_generated_verifier_measures_task_observation_bytes_and_flags_confounded
     assert namespace["task_output_bytes"](document) == expected
     compound = {
         "function_name": "exec",
-        "arguments": {"input": "read /root/.agents/skills/demo/SKILL.md && inspect workspace"},
+        "arguments": {"input": "sed -n '1,240p' /root/.agents/skills/demo/SKILL.md && inspect workspace"},
     }
     confounded = cast(Callable[[dict[str, object]], bool], namespace["confounded_skill_load"])
     assert confounded(compound)
+    harmless = {
+        "function_name": "exec",
+        "arguments": {"input": "printf '%s\\n' /root/.agents/skills/iwe-v18/SKILL.md"},
+        "observation": {"stdout": "path only"},
+    }
+    assert not confounded(harmless)
 
 
 def test_generated_verifier_excludes_generated_workspace_noise(tmp_path: Path) -> None:

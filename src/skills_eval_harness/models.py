@@ -128,6 +128,7 @@ class Judge(StrictModel):
     reasoning: Literal["low", "medium", "high"]
     timeout_seconds: int = Field(ge=1)
     concurrency: int = Field(default=4, ge=1, le=32)
+    max_attempts: int = Field(default=3, ge=1, le=5)
 
 class Execution(StrictModel):
     timeout_seconds: int = Field(ge=1)

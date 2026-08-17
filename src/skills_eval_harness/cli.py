@@ -35,7 +35,7 @@ from .hashing import (
     sha256_tree,
 )
 from .judge import build_evidence, build_judge_messages, derive_cell_outcome
-from .judge_client import judge_cell
+from .judge_client import _retry_judge, judge_cell
 from .models import AnalysisPlan, Agent, HarnessConfig, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
@@ -615,12 +615,15 @@ def _execute_run(
                 return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
-                verdict = judge_cell(
-                    config=config,
-                    scenario=catalog[scenario_id],
-                    evidence=evidence,
-                    auth_mode=args.judge_auth,
-                    auth_json=staged_judge_auth,
+                verdict = _retry_judge(
+                    lambda: judge_cell(
+                        config=config,
+                        scenario=catalog[scenario_id],
+                        evidence=evidence,
+                        auth_mode=args.judge_auth,
+                        auth_json=staged_judge_auth,
+                    ),
+                    max_attempts=config.judge.max_attempts,
                 )
             except Exception:
                 return arm, scenario_id, sample, None, "judge_validation_failed"
