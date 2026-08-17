@@ -4,6 +4,7 @@ import ast
 import json
 import shutil
 from pathlib import Path
+from typing import Callable, cast
 
 from harbor.models.task.config import TaskConfig
 
@@ -113,6 +114,28 @@ def test_generated_verifier_measures_task_observation_bytes() -> None:
     ]}
     expected = len(json.dumps(document["steps"][0]["observation"], ensure_ascii=False, sort_keys=True).encode("utf-8"))
     assert namespace["task_output_bytes"](document) == expected
+
+
+def test_generated_verifier_excludes_generated_workspace_noise(tmp_path: Path) -> None:
+    parsed = ast.parse(VERIFIER)
+    tree_function = next(
+        node for node in parsed.body
+        if isinstance(node, ast.FunctionDef) and node.name == "tree"
+    )
+    namespace: dict[str, object] = {"hashlib": __import__("hashlib")}
+    exec(
+        compile(ast.Module(body=[tree_function], type_ignores=[]), "<verifier-tree>", "exec"),
+        namespace,
+    )
+    (tmp_path / "source.py").write_text("pass\n")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__/source.cpython-313.pyc").write_bytes(b"generated")
+    (tmp_path / ".DS_Store").write_bytes(b"generated")
+
+    tree = cast(Callable[[Path], list[dict[str, object]]], namespace["tree"])
+    manifest = tree(tmp_path)
+
+    assert [item["path"] for item in manifest] == ["source.py"]
 
 
 def test_pair_generation_is_byte_symmetric_except_arm_metadata(tmp_path: Path) -> None:

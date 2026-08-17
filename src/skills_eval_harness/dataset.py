@@ -35,7 +35,7 @@ from pathlib import Path
 def tree(root):
     rows=[]
     for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
-        if ".git" in path.relative_to(root).parts: continue
+        if {".git","__pycache__",".DS_Store"} & set(path.relative_to(root).parts): continue
         if path.is_symlink():
             target=path.resolve()
             if not target.is_relative_to(root.resolve()):
