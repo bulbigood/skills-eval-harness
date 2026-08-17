@@ -201,6 +201,7 @@ def test_trajectory_is_quoted_as_untrusted_evidence(tmp_path: Path) -> None:
             "tool_calls": [
                 {"arguments": {"input": 'const r = await tools.exec_command({cmd:"sed -n 1,20p /tmp/secret-token",workdir:"/workspace"});'}},
                 {"arguments": {"input": 'const r = await tools.exec_command({cmd:"iwe inline core-parent --reference core-child --keep-target --dry-run --format keys",workdir:"/workspace"});'}},
+                {"arguments": {"input": 'const r = await tools.exec_command({cmd:"iwe create note --body \'line1\\nline2\'",workdir:"/workspace"});'}},
             ],
         },
     ]
@@ -211,9 +212,21 @@ def test_trajectory_is_quoted_as_untrusted_evidence(tmp_path: Path) -> None:
     command_text = next(text for kind, text in evidence if kind == "command")
     assert '"--keep-target"' in command_text
     assert '"--dry-run"' in command_text
+    assert r"line1\nline2" in command_text
     assert "secret-token" not in command_text
     assert all(kind != "instruction" for kind, _ in evidence)
     assert all(kind != "command" for kind, _ in trial_evidence(tmp_path, "trial", include_command_evidence=False))
+
+
+def test_command_evidence_rejects_non_whitespace_control_characters(tmp_path: Path) -> None:
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    source = 'const r = await tools.exec_command({cmd:"iwe create note --body \'line1\\u0000line2\'"});'
+    steps = [{"source": "agent", "message": "done", "tool_calls": [{"arguments": {"input": source}}]}]
+    (trial / "agent/trajectory.json").write_text(json.dumps({"steps": steps}))
+
+    with pytest.raises(ValueError, match="safe bounded format"):
+        trial_evidence(tmp_path, "trial")
 
 
 def test_cell_schema_rejects_coercion_out_of_range_scores_and_boolean_metrics() -> None:

@@ -212,7 +212,10 @@ def _sanitized_iwe_commands(path: Path) -> list[list[str]]:
                 continue
             if not argv or argv[0] != "iwe":
                 continue
-            if len(argv) > 64 or any(len(value) > 512 or any(ord(char) < 32 for char in value) for value in argv):
+            if len(argv) > 64 or any(
+                len(value) > 512 or any(ord(char) < 32 and char not in "\t\n\r" for char in value)
+                for value in argv
+            ):
                 raise ValueError("IWE command evidence exceeds the safe bounded format")
             commands.append(argv)
             if len(commands) > 64:
