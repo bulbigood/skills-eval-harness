@@ -39,8 +39,9 @@ def _is_targeted_read(argv: list[str], target: str) -> bool:
         return len(argv) == 4 and argv[1] == "-n" and argv[2].endswith("p")
     if argv[0] == "awk" and len(argv) == 3:
         program = argv[1]
-        forbidden = ("system", "getline", "|", ">", "<", "\x00")
-        return len(program) <= 256 and not any(item in program.lower() for item in forbidden)
+        forbidden = ("system", "getline", "|", "\x00")
+        redirect = re.search(r"\bprint(?:f)?\b[^;{}]*[<>]", program)
+        return len(program) <= 256 and redirect is None and not any(item in program.lower() for item in forbidden)
     return False
 
 
