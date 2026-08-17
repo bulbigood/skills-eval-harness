@@ -73,7 +73,8 @@ Completed trials with deterministic task failures remain valid, judged experimen
 
 - [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md)
 - [Skill-guidance efficiency A/B](docs/evals/skill-guidance-efficiency-ab.md)
-- Latest production report: [Skill-guidance efficiency A/B — 2026-08-17](reports/skills-eval-production-ab-20260817-v3.md)
+- Latest Default-skill production report: [Default-skill correctness and efficiency — 2026-08-17](reports/default-skill-production-20260817-v1.md)
+- Latest Skill-guidance A/B production report: [Skill-guidance efficiency A/B — 2026-08-17](reports/skills-eval-production-ab-20260817-v3.md)
 
 ## Commands
 
