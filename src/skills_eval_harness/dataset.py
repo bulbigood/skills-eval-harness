@@ -243,6 +243,15 @@ def _semantic_oracle(workspace: Path, scenario: dict) -> dict:
         "source_excerpts": excerpts,
     }
 
+def _companion_assertions(path: Path) -> dict[str, list[dict]]:
+    source = path.parent.parent / "postconditions" / path.name
+    document = cast(dict, load_yaml(source))
+    items = document.get("scenarios")
+    if document.get("schema_version") != 1 or not isinstance(items, list):
+        raise ValueError("postcondition catalog must use schema_version 1")
+    return {item["id"]: item["assertions"] for item in items}
+
+
 def scenario_map(path: Path) -> dict[str, dict]:
     document = load_yaml(path)
     if document.get("schema_version") != 2 or not isinstance(document.get("scenarios"), list):
@@ -250,11 +259,13 @@ def scenario_map(path: Path) -> dict[str, dict]:
     scenarios = {item["id"]: item for item in document["scenarios"]}
     if len(scenarios) != len(document["scenarios"]):
         raise ValueError("duplicate scenario IDs")
-    assertions_path = path.parent.parent / "postconditions" / path.name
-    assertions_document = cast(dict, load_yaml(assertions_path))
-    if assertions_document.get("schema_version") != 1 or not isinstance(assertions_document.get("scenarios"), list):
-        raise ValueError("postcondition catalog must use schema_version 1")
-    assertions = {item["id"]: item["assertions"] for item in assertions_document["scenarios"]}
+    embedded = ["postconditions" in scenario for scenario in scenarios.values()]
+    if any(embedded) and not all(embedded):
+        raise ValueError("scenario catalog mixes embedded and companion postconditions")
+    if all(embedded):
+        assertions = {scenario_id: scenario["postconditions"] for scenario_id, scenario in scenarios.items()}
+    else:
+        assertions = _companion_assertions(path)
     if set(assertions) != set(scenarios):
         raise ValueError("postcondition catalog scenario IDs differ from scenario catalog")
     for scenario_id, scenario in scenarios.items():

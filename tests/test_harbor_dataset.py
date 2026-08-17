@@ -9,7 +9,7 @@ from typing import Callable, cast
 import pytest
 from harbor.models.task.config import TaskConfig
 
-from skills_eval_harness.dataset import VERIFIER, _materialize_runtime, generate_dataset
+from skills_eval_harness.dataset import VERIFIER, _materialize_runtime, generate_dataset, scenario_map
 from skills_eval_harness.hashing import sha256_tree
 from skills_eval_harness.models import load_config, load_suite
 
@@ -170,3 +170,10 @@ def test_unavailable_runtime_is_deterministic(tmp_path: Path) -> None:
     assert target.stat().st_mode & 0o111
     with pytest.raises(ValueError, match="unknown runtime mode"):
         _materialize_runtime(source, target, "future")
+
+
+def test_embedded_postcondition_catalog_is_self_contained(tmp_path: Path) -> None:
+    catalog = scenario_map(ROOT / "evals/scenarios/iwe.yaml")
+    sealed = tmp_path / "scenario-catalog.yaml"
+    sealed.write_text(json.dumps({"schema_version": 2, "scenarios": list(catalog.values())}))
+    assert scenario_map(sealed) == catalog
