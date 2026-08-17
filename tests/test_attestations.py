@@ -8,7 +8,7 @@ def call(command: str) -> dict:
 
 
 def test_fallback_attestation_accepts_only_one_scoped_read_after_iwe() -> None:
-    document = {"steps": [call("iwe read graph/eval-roadmap.md"), call("sed -n '1,80p' graph/eval-roadmap.md")]}
+    document = {"steps": [call("iwe retrieve graph/eval-roadmap.md"), call("sed -n '1,80p' graph/eval-roadmap.md")]}
     assert fallback_attestation(document, "graph/eval-roadmap.md") == {
         "protocol": "fallback-attestation-v1",
         "runtime_attempt_observed": True,
@@ -19,7 +19,14 @@ def test_fallback_attestation_accepts_only_one_scoped_read_after_iwe() -> None:
 
 
 def test_fallback_attestation_fails_closed_on_broad_or_opaque_calls() -> None:
-    document = {"steps": [call("iwe read graph/eval-roadmap.md"), call("find graph -type f"), call("cat graph/eval-roadmap.md")]}
+    document = {"steps": [call("iwe retrieve graph/eval-roadmap.md"), call("find graph -type f"), call("cat graph/eval-roadmap.md")]}
     result = fallback_attestation(document, "graph/eval-roadmap.md")
-    assert result["targeted_fallback_observed"] is True
+    assert result["targeted_fallback_observed"] is False
     assert result["unrelated_post_failure_tool_call_observed"] is True
+
+
+def test_fallback_attestation_requires_retrieve_attempt() -> None:
+    document = {"steps": [call("iwe validate graph/eval-roadmap.md"), call("cat graph/eval-roadmap.md")]}
+    result = fallback_attestation(document, "graph/eval-roadmap.md")
+    assert result["runtime_attempt_observed"] is False
+    assert result["targeted_fallback_observed"] is False

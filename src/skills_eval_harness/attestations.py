@@ -42,7 +42,7 @@ def _is_targeted_read(argv: list[str], target: str) -> bool:
 
 def fallback_attestation(document: dict[str, Any], target: str) -> dict[str, Any]:
     commands = _commands(document)
-    iwe_indices = [index for index, argv in enumerate(commands) if argv and argv[0] == "iwe"]
+    iwe_indices = [index for index, argv in enumerate(commands) if argv and argv[:2] == ["iwe", "retrieve"]]
     reads = [index for index, argv in enumerate(commands) if argv and _is_targeted_read(argv, target)]
     after_attempt = bool(iwe_indices and reads and reads[0] > iwe_indices[0])
     unrelated = any(
@@ -52,7 +52,7 @@ def fallback_attestation(document: dict[str, Any], target: str) -> dict[str, Any
     return {
         "protocol": "fallback-attestation-v1",
         "runtime_attempt_observed": len(iwe_indices) == 1,
-        "targeted_fallback_observed": len(reads) == 1 and after_attempt,
+        "targeted_fallback_observed": len(reads) == 1 and after_attempt and not unrelated,
         "declared_path": target,
         "unrelated_post_failure_tool_call_observed": unrelated,
     }
