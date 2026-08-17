@@ -21,7 +21,7 @@ from .hashing import (
     sha256_file,
     sha256_tree,
 )
-from .judge import Evidence, build_evidence, build_judge_messages, derive_cell_outcome, judge_messages_match, validate_verdict
+from .judge import JUDGE_SCALE, Evidence, build_evidence, build_judge_messages, derive_cell_outcome, judge_messages_match, validate_verdict
 from .models import AnalysisPlan, HarnessConfig, StrictModel, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
 from .results import CellRecord, MeasurementConfoundedError, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
@@ -530,7 +530,7 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
             ):
                 raise ValueError("cell scores or pass flags do not derive from the sealed verdict")
             expected_messages = build_judge_messages(
-                scenario=catalog[cell["scenario_id"]], evidence=evidence, scale={"minimum": 0, "maximum": 5}
+                scenario=catalog[cell["scenario_id"]], evidence=evidence, scale=JUDGE_SCALE
             )
             if not judge_messages_match(cell["judge_messages"], expected_messages):
                 raise ValueError("stored judge messages do not match sealed scenario and evidence")

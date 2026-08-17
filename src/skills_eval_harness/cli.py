@@ -34,7 +34,7 @@ from .hashing import (
     sha256_file,
     sha256_tree,
 )
-from .judge import build_evidence, build_judge_messages, derive_cell_outcome
+from .judge import JUDGE_SCALE, build_evidence, build_judge_messages, derive_cell_outcome
 from .judge_client import _retry_judge, judge_cell
 from .models import AnalysisPlan, Agent, HarnessConfig, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
@@ -661,7 +661,7 @@ def _execute_run(
                 "judge_messages": build_judge_messages(
                     scenario=catalog[scenario_id],
                     evidence=evidence,
-                    scale={"minimum": 0, "maximum": 5},
+                    scale=JUDGE_SCALE,
                 ),
                 "verdict": verdict.model_dump(mode="json"),
             }

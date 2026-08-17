@@ -13,6 +13,19 @@ from .acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS as _DIMENSIONS
 DIMENSION_THRESHOLDS = MappingProxyType(dict(CURRENT_ACCEPTANCE_POLICY.score_thresholds))
 SAMPLE_PASS_RATE_THRESHOLDS = MappingProxyType(dict(CURRENT_ACCEPTANCE_POLICY.sample_pass_rate_thresholds))
 DIMENSIONS = _DIMENSIONS
+JUDGE_SCALE = {
+    "minimum": 0,
+    "maximum": 5,
+    "anchors": {
+        "0": "absent, contradicted, or wholly unacceptable",
+        "1": "severe shortcomings",
+        "2": "major shortcomings",
+        "3": "material shortcomings or avoidable inefficiency",
+        "4": "fully acceptable with only minor shortcomings",
+        "5": "excellent with no meaningful shortcomings",
+    },
+}
+LEGACY_JUDGE_SCALE = {"minimum": 0, "maximum": 5}
 
 EvidenceKind = Literal["oracle", "telemetry", "command", "workspace", "response", "infrastructure"]
 
@@ -96,15 +109,31 @@ def build_judge_messages(*, scenario: dict, evidence: tuple[Evidence, ...], scal
 
 
 def judge_messages_match(stored: list[dict[str, str]], expected: list[dict[str, str]]) -> bool:
-    """Accept only the current prompt or a pinned legacy prompt with the exact current envelope."""
+    """Accept the current envelope or an otherwise exact frozen legacy scale envelope."""
     if stored == expected:
         return True
-    return (
-        len(stored) == len(expected) == 2
-        and stored[1] == expected[1]
-        and stored[0].get("role") == "system"
-        and stored[0].get("content") in LEGACY_SYSTEM_PROMPTS
-    )
+    if len(stored) != len(expected) or len(expected) != 2:
+        return False
+    stored_prompt = stored[0].get("content")
+    if stored[0].get("role") != "system" or (
+        stored_prompt != expected[0].get("content") and stored_prompt not in LEGACY_SYSTEM_PROMPTS
+    ):
+        return False
+    stored_user = stored[1].get("content")
+    expected_user = expected[1].get("content")
+    if not isinstance(stored_user, str) or not isinstance(expected_user, str):
+        return False
+    if stored_user == expected_user:
+        return True
+    try:
+        expected_envelope = json.loads(expected_user)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if expected_envelope.get("scale") != JUDGE_SCALE:
+        return False
+    expected_envelope["scale"] = LEGACY_JUDGE_SCALE
+    legacy_user = json.dumps(expected_envelope, ensure_ascii=False, sort_keys=True)
+    return stored_user == legacy_user
 
 def validate_verdict(payload: str | bytes | dict, evidence: tuple[Evidence, ...]) -> JudgeVerdict:
     if isinstance(payload, bytes):

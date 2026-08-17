@@ -11,7 +11,7 @@ from typing import Any, Callable, TypeVar, cast
 
 from openai import OpenAI
 
-from .judge import Evidence, JudgeVerdict, build_judge_messages, validate_verdict
+from .judge import JUDGE_SCALE, Evidence, JudgeVerdict, build_judge_messages, validate_verdict
 from .models import HarnessConfig
 from .security import _read_private_auth
 
@@ -35,7 +35,7 @@ def _judge_prompt(*, scenario: dict, evidence: tuple[Evidence, ...]) -> str:
     messages = build_judge_messages(
         scenario=scenario,
         evidence=evidence,
-        scale={"minimum": 0, "maximum": 5},
+        scale=JUDGE_SCALE,
     )
     return json.dumps(
         {
@@ -214,7 +214,7 @@ def judge_cell_api(
     messages = build_judge_messages(
         scenario=scenario,
         evidence=evidence,
-        scale={"minimum": 0, "maximum": 5},
+        scale=JUDGE_SCALE,
     )
     response = client.responses.create(
         model=config.judge.model,
