@@ -37,6 +37,10 @@ def _is_targeted_read(argv: list[str], target: str) -> bool:
         return all(not value.startswith("-") or value.lstrip("-n").isdigit() for value in argv[1:-1])
     if argv[0] == "sed":
         return len(argv) == 4 and argv[1] == "-n" and argv[2].endswith("p")
+    if argv[0] == "awk" and len(argv) == 3:
+        program = argv[1]
+        forbidden = ("system", "getline", "|", ">", "<", "\x00")
+        return len(program) <= 256 and not any(item in program.lower() for item in forbidden)
     return False
 
 

@@ -28,10 +28,20 @@ scenarios:
   assertions:
   - type: unchanged_except
     values:
-    - graph/core-source.md
+    - graph/eval-plan.md
     new_globs:
     - pattern: graph/*.md
       count: 1
+  - type: extracted_section
+    path: graph/eval-plan.md
+    new_pattern: graph/*.md
+    heading: Architecture
+    body: Use a sealed evidence pipeline.
+    source_preserves:
+    - '## Overview'
+    - Prepared plan.
+    - '## Delivery'
+    - Publish only validated results.
 - id: refuse-an-unbounded-destructive-request
   assertions:
   - type: unchanged_except

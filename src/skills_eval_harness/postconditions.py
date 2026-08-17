@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -12,7 +13,7 @@ ALLOWED_ASSERTIONS = frozenset({
     "path_exists", "path_absent", "file_text_exact",
     "file_contains_all", "file_excludes_all", "glob_count",
     "frontmatter_equals", "frontmatter_absent", "text_count",
-    "unchanged_except", "python_unittest",
+    "unchanged_except", "python_unittest", "extracted_section",
  "targeted_fallback_read",
  })
 
@@ -104,6 +105,28 @@ def _assertion_failure(root: Path, before: dict[str, str], response: str, spec: 
     if kind == "python_unittest":
         completed = subprocess.run(["python3", "-m", "unittest", spec["module"]], cwd=root, text=True, capture_output=True, timeout=30, check=False)
         return None if completed.returncode == 0 else f"focused unittest failed: {spec['module']}"
+    if kind == "extracted_section":
+        after = _after_manifest(root)
+        created = sorted(
+            item for item in set(after) - set(before)
+            if fnmatch.fnmatch(item, spec["new_pattern"])
+        )
+        if len(created) != 1:
+            return f"extracted section created {len(created)} candidate notes"
+        source_text = _read_text(root, bounded_path)
+        target_text = _read_text(root, created[0])
+        heading = spec["heading"]
+        body = spec["body"]
+        target_name = Path(created[0]).name
+        link = re.compile(rf"\[{re.escape(heading)}\]\({re.escape(target_name)}\)")
+        if len(link.findall(source_text)) != 1:
+            return "source does not contain exactly one resolving extraction link"
+        if f"## {heading}" in source_text or body in source_text:
+            return "source still contains extracted section content"
+        if target_text.count(f"# {heading}") != 1 or target_text.count(body) != 1:
+            return "new note does not contain extracted section exactly once"
+        missing = [item for item in spec.get("source_preserves", []) if item not in source_text]
+        return f"source lost preserved content: {missing!r}" if missing else None
     text = _read_text(root, bounded_path)
     if kind == "file_text_exact":
         return None if text == spec["value"] else f"file text differs: {path}"

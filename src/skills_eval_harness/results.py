@@ -27,6 +27,10 @@ if TYPE_CHECKING:
     from .summary import SummaryV5
 
 
+class MeasurementConfoundedError(ValueError):
+    """Task-phase efficiency cannot be separated from setup output."""
+
+
 EVIDENCE_KINDS: dict[str, EvidenceKind] = {
     "oracle": "oracle",
     "workspace": "workspace",
@@ -274,7 +278,7 @@ def trial_evidence(
             if name == "mechanical":
                 mechanical = json.loads(text)
                 if mechanical.get("measurement_confounded") is True:
-                    raise ValueError("task efficiency measurement is confounded with setup output")
+                    raise MeasurementConfoundedError("task efficiency measurement is confounded with setup output")
             evidence.append((EVIDENCE_KINDS[name], f"{name} sha256={sha256_file(path)}\n{text[:8000]}"))
     return evidence
 

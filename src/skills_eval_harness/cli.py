@@ -50,7 +50,7 @@ from .security import (
     validate_codex_auth,
 )
 from .source import materialize_git_identity, resolve_skill, verify_runtime, write_git_commit_object
-from .results import trial_evidence, trial_scenario_outcome, validate_job, write_summary
+from .results import MeasurementConfoundedError, trial_evidence, trial_scenario_outcome, validate_job, write_summary
 from .telemetry import TelemetryRecorder, set_terminal_status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -626,6 +626,8 @@ def _execute_run(
                     ),
                     max_attempts=config.judge.max_attempts,
                 )
+            except MeasurementConfoundedError:
+                return arm, scenario_id, sample, None, "measurement_confounded"
             except Exception:
                 return arm, scenario_id, sample, None, "judge_validation_failed"
             scores, passed, required = derive_cell_outcome(

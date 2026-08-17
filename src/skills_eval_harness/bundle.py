@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping
 
 import yaml
 
+from .dataset import scenario_map
 from .fixtures import materialized_fixture_path
 from .hashing import (
     canonical_json,
@@ -23,7 +24,7 @@ from .hashing import (
 from .judge import Evidence, build_evidence, build_judge_messages, derive_cell_outcome, judge_messages_match, validate_verdict
 from .models import AnalysisPlan, HarnessConfig, StrictModel, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
-from .results import CellRecord, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
+from .results import CellRecord, MeasurementConfoundedError, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
 from .summary import SummaryV5
 from .telemetry import DeviceTelemetry, validate_device_telemetry
 
@@ -134,6 +135,7 @@ class ReproducedTrials:
     evidence: dict[tuple[str, str, int], list[dict]]
     scenario_outcomes: dict[tuple[str, str, int], str]
     scenario_failures: dict[tuple[str, str, int], list[str]]
+    deterministic_invalid_reasons: dict[tuple[str, str, int], str]
 
 
 @dataclass(frozen=True)
@@ -239,7 +241,6 @@ def _verify_canonical_inputs_and_provenance(bundle: BundleInputs) -> VerifiedInp
     harness_snapshot = run_dir / "inputs/harness-repository"
     canonical_inputs = {
         config_path: harness_snapshot / "evals/config.yaml",
-        catalog_path: harness_snapshot / "evals/scenarios/iwe.yaml",
         fixtures_path: harness_snapshot / "evals/fixtures/sources.json",
     }
     if any(
@@ -247,6 +248,14 @@ def _verify_canonical_inputs_and_provenance(bundle: BundleInputs) -> VerifiedInp
         for sealed, canonical in canonical_inputs.items()
     ):
         raise ValueError("sealed canonical registries do not match the harness commit")
+    canonical_catalog = harness_snapshot / "evals/scenarios/iwe.yaml"
+    canonical_document = yaml.safe_load(canonical_catalog.read_text(encoding="utf-8"))
+    if canonical_document.get("schema_version") == 2:
+        catalog_matches = scenario_map(catalog_path) == scenario_map(canonical_catalog)
+    else:
+        catalog_matches = catalog_path.read_bytes() == canonical_catalog.read_bytes()
+    if not catalog_matches:
+        raise ValueError("sealed scenario registry does not match the harness commit")
     source_repository = provenance.source_url.split("/tree/", 1)[0].rstrip("/").removesuffix(".git")
     if (
         f"/tree/{provenance.source_commit}/" not in provenance.source_url
@@ -338,6 +347,7 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
     expected_evidence: dict[tuple[str, str, int], list[dict]] = {}
     expected_scenario_outcomes: dict[tuple[str, str, int], str] = {}
     expected_scenario_failures: dict[tuple[str, str, int], list[str]] = {}
+    deterministic_invalid_reasons: dict[tuple[str, str, int], str] = {}
     observed_trials: set[tuple[str, str, int]] = set()
     profile = config.agents[manifest.agent]
     if manifest.agent_version != profile.version:
@@ -357,10 +367,17 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
             raise ValueError("dataset path escapes the run directory")
         for task in sorted(path for path in dataset.iterdir() if path.is_dir()):
             key = f"{arm_id}/{task.name}"
-            if harbor_content_sha256(
-                task,
-                virtual_files={"environment/payload/usr/local/bin/iwe": run_dir / "inputs/runtime"},
-            ) != provenance.task_checksums.get(key):
+            task_manifest_path = task / "manifest.json"
+            runtime_unavailable = (
+                task_manifest_path.is_file()
+                and _load_json(task_manifest_path).get("runtime_mode") == "unavailable"
+            )
+            virtual_runtime = (
+                None
+                if runtime_unavailable
+                else {"environment/payload/usr/local/bin/iwe": run_dir / "inputs/runtime"}
+            )
+            if harbor_content_sha256(task, virtual_files=virtual_runtime) != provenance.task_checksums.get(key):
                 raise ValueError(f"materialized task mismatch: {key}")
         matching_jobs = []
         for candidate in sorted((run_dir / "jobs").iterdir()):
@@ -408,18 +425,26 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
             expected_scenario_outcomes[identity], expected_scenario_failures[identity] = trial_scenario_outcome(
                 job_dir, trial
             )
-            expected_evidence[identity] = [
-                item.model_dump(mode="json")
-                for item in build_evidence(trial_evidence(
+            try:
+                raw_evidence = trial_evidence(
                     job_dir,
                     trial.trial_name,
                     include_command_evidence=manifest.evidence_protocol == "judge-evidence-v2",
-                ))
+                )
+            except MeasurementConfoundedError:
+                deterministic_invalid_reasons[identity] = "measurement_confounded"
+                continue
+            expected_evidence[identity] = [
+                item.model_dump(mode="json") for item in build_evidence(raw_evidence)
             ]
     if observed_trials != expected_identities:
         raise ValueError("Harbor results do not cover the run identity matrix")
     return ReproducedTrials(
-        plan, expected_evidence, expected_scenario_outcomes, expected_scenario_failures,
+        plan,
+        expected_evidence,
+        expected_scenario_outcomes,
+        expected_scenario_failures,
+        deterministic_invalid_reasons,
     )
 
 
@@ -441,8 +466,13 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
             raise ValueError("cell filename does not match its identity")
         if cell["family"] != scenario_family(catalog[cell["scenario_id"]]):
             raise ValueError("cell family does not match the sealed scenario")
+        identity = (cell["arm"], cell["scenario_id"], cell["sample"])
+        expected_invalid = trials.deterministic_invalid_reasons.get(identity)
+        if expected_invalid is not None and (cell["valid"] or cell["invalid_reason"] != expected_invalid):
+            raise ValueError("stored deterministic invalid reason does not reproduce from Harbor artifacts")
+        if expected_invalid is None and cell["invalid_reason"] == "measurement_confounded":
+            raise ValueError("stored measurement confounding does not reproduce from Harbor artifacts")
         if cell["valid"]:
-            identity = (cell["arm"], cell["scenario_id"], cell["sample"])
             if cell["evidence"] != trials.evidence[identity]:
                 raise ValueError("stored cell evidence does not reproduce from Harbor artifacts")
             if cell["scenario_outcome"] != trials.scenario_outcomes[identity]:
@@ -450,7 +480,10 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
             if cell["scenario_failures"] != trials.scenario_failures[identity]:
                 raise ValueError("stored scenario failures do not reproduce from Harbor artifacts")
             evidence = tuple(Evidence.model_validate(item) for item in cell["evidence"])
-            oracle_items = [item for item in evidence if item.kind == "oracle"]
+            oracle_items = [
+                item for item in evidence
+                if item.kind == "oracle" and item.text.startswith("oracle sha256=")
+            ]
             if len(oracle_items) != 1 or "\n" not in oracle_items[0].text:
                 raise ValueError("semantic oracle does not match the sealed scenario")
             header, oracle_text = oracle_items[0].text.split("\n", 1)

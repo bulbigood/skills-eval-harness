@@ -53,3 +53,16 @@ def test_python_unittest_does_not_require_a_path(tmp_path: Path) -> None:
     assert evaluate_postconditions(
         root=tmp_path, before_rows=[], response="", specs=[{"type": "python_unittest", "module": "test_ok.py"}]
     ) == []
+
+
+def test_extracted_section_requires_resolving_link_and_single_moved_body(tmp_path: Path) -> None:
+    source = tmp_path / "graph/eval-plan.md"
+    source.parent.mkdir()
+    source.write_text("# Plan\n\n## Architecture\n\nMove me.\n\n## Delivery\n\nKeep me.\n")
+    baseline = before(tmp_path)
+    source.write_text("# Plan\n\n[Architecture](generated.md)\n\n## Delivery\n\nKeep me.\n")
+    (source.parent / "generated.md").write_text("# Architecture\n\nMove me.\n")
+    spec = {"type": "extracted_section", "path": "graph/eval-plan.md", "new_pattern": "graph/*.md", "heading": "Architecture", "body": "Move me.", "source_preserves": ["## Delivery", "Keep me."]}
+    assert evaluate_postconditions(root=tmp_path, before_rows=baseline, response="", specs=[spec]) == []
+    source.write_text("# Plan\n\n[Architecture](missing.md)\n\n## Architecture\n\nMove me.\n\n## Delivery\n\nKeep me.\n")
+    assert len(evaluate_postconditions(root=tmp_path, before_rows=baseline, response="", specs=[spec])) == 1
