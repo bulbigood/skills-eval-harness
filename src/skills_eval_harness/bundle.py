@@ -24,7 +24,15 @@ from .hashing import (
 from .judge import JUDGE_SCALE, Evidence, build_evidence, build_judge_messages, derive_cell_outcome, judge_messages_match, validate_verdict
 from .models import AnalysisPlan, HarnessConfig, StrictModel, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
-from .results import CellRecord, MeasurementConfoundedError, summarize_cells, trial_evidence, trial_scenario_outcome, validate_job
+from .results import (
+    CellRecord,
+    MeasurementConfoundedError,
+    summarize_cells,
+    trial_evidence,
+    trial_scenario_outcome,
+    validate_equivalent_judgements,
+    validate_job,
+)
 from .summary import SummaryV5
 from .telemetry import DeviceTelemetry, validate_device_telemetry
 
@@ -458,6 +466,8 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
         for item in yaml.safe_load(bundle.layout.catalog.read_text(encoding="utf-8"))["scenarios"]
     }
     cells = []
+    equivalence_candidates: list[dict] = []
+    stored_equivalence_invalid: set[tuple[str, str, int]] = set()
     for path in sorted((run_dir / "cells").glob("*.json")):
         raw = _load_json(path)
         cell = CellRecord.model_validate(raw).model_dump(mode="json", by_alias=True)
@@ -534,7 +544,33 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
             )
             if not judge_messages_match(cell["judge_messages"], expected_messages):
                 raise ValueError("stored judge messages do not match sealed scenario and evidence")
+            equivalence_candidates.append(dict(cell))
+        elif cell["invalid_reason"] == "equivalent_evidence_judge_inconsistency":
+            if cell["evidence"] != trials.evidence[identity]:
+                raise ValueError("inconsistent-judge cell evidence does not reproduce from Harbor artifacts")
+            evidence = tuple(Evidence.model_validate(item) for item in cell["evidence"])
+            verdict = validate_verdict(canonical_json(cell["verdict"]).decode(), evidence)
+            arm = next(item for item in arms if item["id"] == cell["arm"])
+            expected_scores, _, _ = derive_cell_outcome(verdict, role=arm.get("role"), agent=manifest.agent)
+            expected_messages = build_judge_messages(
+                scenario=catalog[cell["scenario_id"]], evidence=evidence, scale=JUDGE_SCALE
+            )
+            if not judge_messages_match(cell["judge_messages"], expected_messages):
+                raise ValueError("inconsistent-judge messages do not match sealed scenario and evidence")
+            candidate = dict(cell)
+            candidate["valid"] = True
+            candidate["scores"] = expected_scores
+            equivalence_candidates.append(candidate)
+            stored_equivalence_invalid.add(identity)
         cells.append(cell)
+    validate_equivalent_judgements(equivalence_candidates)
+    reproduced_equivalence_invalid = {
+        (cell["arm"], cell["scenario_id"], cell["sample"])
+        for cell in equivalence_candidates
+        if cell.get("invalid_reason") == "equivalent_evidence_judge_inconsistency"
+    }
+    if reproduced_equivalence_invalid != stored_equivalence_invalid:
+        raise ValueError("equivalent-evidence judge inconsistency does not reproduce from sealed verdicts")
     return ReproducedCells(trials, catalog, cells)
 
 

@@ -151,6 +151,7 @@ def test_equivalent_judge_inputs_with_different_scores_fail_closed() -> None:
     for cell in (first, second):
         assert cell["valid"] is False
         assert cell["invalid_reason"] == "equivalent_evidence_judge_inconsistency"
+        assert cell["scores"] == {}
 
 
 

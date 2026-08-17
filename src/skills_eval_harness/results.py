@@ -332,6 +332,7 @@ def validate_equivalent_judgements(cells: list[dict]) -> None:
             cell["pass"] = False
             cell["required_pass"] = False
             cell["invalid_reason"] = "equivalent_evidence_judge_inconsistency"
+            cell["scores"] = {}
 
 
 
