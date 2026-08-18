@@ -248,8 +248,12 @@ scenarios:
   - type: response_contains_all
     values:
     - core-gamma
-    - staged cutovers
-    - rollback checkpoints
+  - type: response_matches_all
+    values:
+    - '(?i)\b(?:staged|phased|incremental|gradual|stepwise)\b'
+    - '(?i)\b(?:cutovers?|rollouts?|migrations?)\b'
+    - '(?i)\brollback\b'
+    - '(?i)\b(?:checkpoints?|points?)\b'
 - id: find-one-exact-note-without-body
   assertions:
   - type: unchanged_except

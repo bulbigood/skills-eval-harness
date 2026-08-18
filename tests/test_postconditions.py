@@ -21,6 +21,7 @@ def test_postconditions_accept_objective_state_and_preservation(tmp_path: Path) 
     failures = evaluate_postconditions(
         root=tmp_path, before_rows=baseline, response="Updated note.md to Done.", specs=[
             {"type": "response_contains_all", "values": ["note.md", "Done"]},
+            {"type": "response_matches_all", "values": [r"(?i)\bupdated\b", r"\bnote\.md\b"]},
             {"type": "frontmatter_equals", "path": "note.md", "values": {"type": "project", "draft": False}},
             {"type": "file_contains_all", "path": "note.md", "values": ["# Status", "Done"]},
             {"type": "unchanged_except", "values": ["note.md"]},
@@ -44,6 +45,8 @@ def test_postconditions_reject_mechanically_plausible_wrong_state(tmp_path: Path
 def test_unknown_assertion_and_path_escape_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown postcondition"):
         evaluate_postconditions(root=tmp_path, before_rows=[], response="", specs=[{"type": "future"}])
+    with pytest.raises(ValueError, match="invalid response regex"):
+        evaluate_postconditions(root=tmp_path, before_rows=[], response="", specs=[{"type": "response_matches_all", "values": ["("]}])
     with pytest.raises(ValueError, match="relative"):
         evaluate_postconditions(root=tmp_path, before_rows=[], response="", specs=[{"type": "path_exists", "path": "/etc/passwd"}])
 

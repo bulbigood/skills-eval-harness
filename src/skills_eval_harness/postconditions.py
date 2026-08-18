@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 ALLOWED_ASSERTIONS = frozenset({
-    "response_contains_all", "response_contains_ordered", "response_excludes_all",
+    "response_contains_all", "response_contains_ordered", "response_excludes_all", "response_matches_all",
     "path_exists", "path_absent", "file_text_exact",
     "file_contains_all", "file_excludes_all", "glob_count",
     "frontmatter_equals", "frontmatter_absent", "text_count",
@@ -82,6 +82,16 @@ def _assertion_failure(root: Path, before: dict[str, str], response: str, spec: 
     if kind == "response_excludes_all":
         present = [item for item in values if item in response]
         return f"response contains forbidden {present!r}" if present else None
+    if kind == "response_matches_all":
+        if not isinstance(values, list) or not 1 <= len(values) <= 8 or any(
+            not isinstance(pattern, str) or not pattern or len(pattern) > 256 for pattern in values
+        ):
+            raise ValueError("response regex patterns must be 1..8 non-empty strings of at most 256 characters")
+        try:
+            missing = [pattern for pattern in values if re.search(pattern, response) is None]
+        except re.error as exc:
+            raise ValueError("invalid response regex") from exc
+        return f"response missing semantic patterns {missing!r}" if missing else None
     if kind == "path_exists":
         return None if _safe_path(root, bounded_path).exists() else f"path missing: {path}"
     if kind == "path_absent":
