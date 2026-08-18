@@ -1,13 +1,27 @@
 """Privacy-preserving procedural attestations from private trajectories."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shlex
 from typing import Any
 
 _CMD = re.compile(r'cmd:"((?:\\.|[^"\\])*)"')
-_UNAVAILABLE_MARKER = "iwe: unavailable in this scenario"
+_UNAVAILABLE_OBSERVATION = [
+    {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
+    {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
+]
+
+
+def _is_controlled_unavailable(observation: str | None) -> bool:
+    if not isinstance(observation, str) or len(observation) > 512:
+        return False
+    try:
+        parsed = ast.literal_eval(observation)
+    except (SyntaxError, ValueError):
+        return False
+    return parsed == _UNAVAILABLE_OBSERVATION
 
 
 def _command_rows(document: dict[str, Any]) -> list[tuple[list[str] | None, str | None]]:
@@ -73,14 +87,14 @@ def fallback_attestation(document: dict[str, Any], target: str) -> dict[str, Any
     iwe_indices = [index for index, argv in enumerate(commands) if argv and argv[:2] == ["iwe", "retrieve"]]
     reads = [index for index, argv in enumerate(commands) if argv and _is_targeted_read(argv, target)]
     observation = rows[iwe_indices[0]][1] if len(iwe_indices) == 1 else None
-    unavailable = isinstance(observation, str) and _UNAVAILABLE_MARKER in observation
+    unavailable = _is_controlled_unavailable(observation)
     after_attempt = bool(unavailable and reads and reads[0] > iwe_indices[0])
     unrelated = any(
         index > iwe_indices[0] and index not in reads
         for index in range(len(commands))
     ) if iwe_indices else False
     return {
-        "protocol": "fallback-attestation-v2",
+        "protocol": "fallback-attestation-v3",
         "runtime_attempt_observed": len(iwe_indices) == 1,
         "runtime_unavailable_observed": unavailable,
         "targeted_fallback_observed": len(reads) == 1 and after_attempt and not unrelated,

@@ -1,9 +1,14 @@
 import json
 
+import pytest
+
 from skills_eval_harness.attestations import fallback_attestation
 
 
-UNAVAILABLE = "iwe: unavailable in this scenario\n"
+UNAVAILABLE = repr([
+    {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
+    {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
+])
 TARGET = "graph/eval-roadmap.md"
 
 
@@ -27,7 +32,7 @@ def retrieve(observation: str = UNAVAILABLE) -> dict:
 def test_fallback_attestation_accepts_only_one_scoped_read_after_failed_iwe() -> None:
     document = {"steps": [retrieve(), call("sed -n '1,80p' graph/eval-roadmap.md")]}
     assert fallback_attestation(document, TARGET) == {
-        "protocol": "fallback-attestation-v2",
+        "protocol": "fallback-attestation-v3",
         "runtime_attempt_observed": True,
         "runtime_unavailable_observed": True,
         "targeted_fallback_observed": True,
@@ -56,6 +61,32 @@ def test_fallback_attestation_requires_controlled_unavailable_observation() -> N
         TARGET,
     )
     assert result["runtime_attempt_observed"] is True
+    assert result["runtime_unavailable_observed"] is False
+    assert result["targeted_fallback_observed"] is False
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "iwe: unavailable in this scenario\n",
+        "Success: iwe: unavailable in this scenario\n",
+        "Error: iwe: unavailable in this scenario\ncontinued",
+        repr([
+            {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
+        ]),
+        repr([
+            {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
+            {"type": "input_text", "text": "success"},
+        ]),
+    ],
+)
+def test_fallback_attestation_rejects_non_exact_unavailable_observations(observation: str) -> None:
+    result = fallback_attestation(
+        {"steps": [retrieve(observation), call("awk 'NR>=1 && NR<=10 {print}' graph/eval-roadmap.md")]},
+        TARGET,
+    )
     assert result["runtime_unavailable_observed"] is False
     assert result["targeted_fallback_observed"] is False
 
