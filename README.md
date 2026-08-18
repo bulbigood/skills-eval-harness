@@ -74,6 +74,10 @@ Completed trials with deterministic task failures remain valid, judged experimen
 - [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md)
 - [Skill-guidance efficiency A/B](docs/evals/skill-guidance-efficiency-ab.md)
 
+## Published results
+
+- Latest: [Default-skill correctness and efficiency — 2026-08-18 v2](reports/default-skill-correctness-efficiency-20260818-v2.md) — validated evidence; preregistered acceptance **FAIL**.
+
 
 ## Commands
 
