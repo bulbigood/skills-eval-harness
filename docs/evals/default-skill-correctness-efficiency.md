@@ -84,6 +84,6 @@ Use `--jobs 4` for this single-arm benchmark. Unlike the paired A/B suite, it do
 
 ## Production acceptance
 
-A production report may be published only from a complete schema-v5 Harbor run with valid evidence and a clean harness tree. A valid acceptance failure remains publishable as an observed result. The publisher recomputes the summary, validates provenance, derives the canonical repository from the Git remote, refuses replacement, and emits and links a SHA-256 sidecar.
+A production report may be published only from a complete schema-v6 Harbor run with valid evidence and a clean harness tree. A valid acceptance failure remains publishable as an observed result. The publisher recomputes the summary, validates provenance, derives the canonical repository from the Git remote, refuses replacement, and emits and links a SHA-256 sidecar.
 
 The report uses the common identity/status, arm/model, judge, provenance, acceptance, overall/per-scenario results, failures/reliability, timing, and audit contract. Absolute reports do not contain paired cohorts, deltas, exclusions, or superiority language.

@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from .bundle import ValidatedBundle
-from .summary import SummaryV5
+from .summary import SummaryV6
 
 
 def validate_publication_filename(output: Path) -> None:
@@ -99,7 +99,7 @@ class ReportTelemetry(ReportModel):
 
 
 class ReportContext(ReportModel):
-    summary: SummaryV5
+    summary: SummaryV6
     identity: ReportIdentity
     execution: ReportExecution
     provenance: ReportProvenance

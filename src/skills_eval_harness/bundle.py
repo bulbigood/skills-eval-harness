@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 import yaml
+from pydantic import Field
 
 from .dataset import scenario_map
 from .fixtures import materialized_fixture_path
@@ -26,14 +27,13 @@ from .models import AnalysisPlan, HarnessConfig, StrictModel, Suite, load_config
 from .provenance import Provenance, verify_harbor_lock, verify_run_seal
 from .results import (
     CellRecord,
-    MeasurementConfoundedError,
     summarize_cells,
     trial_evidence,
     trial_scenario_outcome,
     validate_equivalent_judgements,
     validate_job,
 )
-from .summary import SummaryV5, SummaryV6
+from .summary import SummaryV6
 from .telemetry import DeviceTelemetry, validate_device_telemetry
 
 
@@ -67,8 +67,8 @@ class BundleLayout:
 
 
 class ManifestExecution(StrictModel):
-    global_concurrency: int | None = None
-    judge_concurrency: int
+    global_concurrency: int = Field(ge=1, le=32)
+    judge_concurrency: int = Field(ge=1, le=32)
     arm_concurrency_batches: list[dict[str, int]]
 
 
@@ -80,9 +80,9 @@ class CurrentRunManifest(StrictModel):
     agent: str
     agent_version: str
     node_version: str
-    worker_auth_mode: str = "api-key"
-    judge_auth_mode: str = "api-key"
-    evidence_protocol: Literal["judge-evidence-v1", "judge-evidence-v2", "judge-evidence-v3"] = "judge-evidence-v1"
+    worker_auth_mode: Literal["api-key", "chatgpt"]
+    judge_auth_mode: Literal["api-key", "chatgpt"]
+    evidence_protocol: Literal["judge-evidence-v3"]
     samples: int
     suite_default_samples: int
     run_purpose: Literal["diagnostic", "production"]
@@ -105,7 +105,7 @@ class ValidatedBundle:
     analysis: AnalysisPlan
     catalog: Mapping[str, Mapping[str, Any]]
     cells: tuple[CellRecord, ...]
-    summary: SummaryV5 | SummaryV6
+    summary: SummaryV6
     telemetry: DeviceTelemetry
     skill: SelectedSkillMetadata
 
@@ -113,7 +113,7 @@ class ValidatedBundle:
 @dataclass(frozen=True)
 class BundleInputs:
     layout: BundleLayout
-    stored_summary: SummaryV5 | SummaryV6
+    stored_summary: SummaryV6
     manifest: CurrentRunManifest
     provenance: Provenance
     telemetry: DeviceTelemetry
@@ -193,14 +193,11 @@ def _load_bundle_inputs(run_dir: Path, *, require_seal: bool) -> BundleInputs:
         verify_run_seal(run_dir)
     stored_summary_raw = _load_json(layout.summary)
     schema_version = stored_summary_raw.get("schema_version")
-    if type(schema_version) is not int or schema_version not in {5, 6}:
-        raise ValueError("only summary schema versions 5 and 6 are supported")
+    if type(schema_version) is not int or schema_version != 6:
+        raise ValueError("only summary schema version 6 is supported")
     telemetry = validate_device_telemetry(layout.telemetry)
-    summary_model = SummaryV5 if schema_version == 5 else SummaryV6
-    stored_summary = summary_model.model_validate(stored_summary_raw)
+    stored_summary = SummaryV6.model_validate(stored_summary_raw)
     manifest = CurrentRunManifest.model_validate(_load_json(layout.manifest))
-    if (schema_version == 6) != (manifest.evidence_protocol == "judge-evidence-v3"):
-        raise ValueError("summary schema and evidence protocol are inconsistent")
     validate_run_id(manifest.run_id)
     provenance = Provenance.model_validate_json(
         (run_dir / "provenance.json").read_text(encoding="utf-8")
@@ -262,11 +259,9 @@ def _verify_canonical_inputs_and_provenance(bundle: BundleInputs) -> VerifiedInp
         raise ValueError("sealed canonical registries do not match the harness commit")
     canonical_catalog = harness_snapshot / "evals/scenarios/iwe.yaml"
     canonical_document = yaml.safe_load(canonical_catalog.read_text(encoding="utf-8"))
-    if canonical_document.get("schema_version") == 2:
-        catalog_matches = scenario_map(catalog_path) == scenario_map(canonical_catalog)
-    else:
-        catalog_matches = catalog_path.read_bytes() == canonical_catalog.read_bytes()
-    if not catalog_matches:
+    if canonical_document.get("schema_version") != 2:
+        raise ValueError("canonical scenario registry must use schema version 2")
+    if scenario_map(catalog_path) != scenario_map(canonical_catalog):
         raise ValueError("sealed scenario registry does not match the harness commit")
     source_repository = provenance.source_url.split("/tree/", 1)[0].rstrip("/").removesuffix(".git")
     if (
@@ -366,10 +361,7 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
         raise ValueError("run manifest agent version does not match the sealed config")
     if manifest.node_version != config.container.node_version:
         raise ValueError("run manifest Node version does not match the sealed config")
-    has_judge_concurrency = manifest.execution.judge_concurrency is not None
-    if has_judge_concurrency != (provenance.judge_concurrency is not None):
-        raise ValueError("judge concurrency must be present in both manifest and provenance")
-    if has_judge_concurrency and manifest.execution.judge_concurrency != provenance.judge_concurrency:
+    if manifest.execution.judge_concurrency != provenance.judge_concurrency:
         raise ValueError("judge concurrency does not match sealed provenance")
     batches = manifest.execution.arm_concurrency_batches
     for arm in arms:
@@ -437,16 +429,7 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
             expected_scenario_outcomes[identity], expected_scenario_failures[identity] = trial_scenario_outcome(
                 job_dir, trial
             )
-            try:
-                raw_evidence = trial_evidence(
-                    job_dir,
-                    trial.trial_name,
-                    include_command_evidence=manifest.evidence_protocol in {"judge-evidence-v2", "judge-evidence-v3"},
-                    conservative_confounded=manifest.evidence_protocol == "judge-evidence-v3",
-                )
-            except MeasurementConfoundedError:
-                deterministic_invalid_reasons[identity] = "measurement_confounded"
-                continue
+            raw_evidence = trial_evidence(job_dir, trial.trial_name)
             expected_evidence[identity] = [
                 item.model_dump(mode="json") for item in build_evidence(raw_evidence)
             ]
@@ -483,10 +466,12 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
             raise ValueError("cell family does not match the sealed scenario")
         identity = (cell["arm"], cell["scenario_id"], cell["sample"])
         expected_invalid = trials.deterministic_invalid_reasons.get(identity)
-        if expected_invalid is not None and (cell["valid"] or cell["invalid_reason"] != expected_invalid):
-            raise ValueError("stored deterministic invalid reason does not reproduce from Harbor artifacts")
-        if expected_invalid is None and cell["invalid_reason"] == "measurement_confounded":
-            raise ValueError("stored measurement confounding does not reproduce from Harbor artifacts")
+        if expected_invalid is not None and (
+            cell["valid"] or cell["invalid_reason"] != expected_invalid
+        ):
+            raise ValueError(
+                "stored deterministic invalid reason does not reproduce from Harbor artifacts"
+            )
         if cell["valid"]:
             if cell["evidence"] != trials.evidence[identity]:
                 raise ValueError("stored cell evidence does not reproduce from Harbor artifacts")
@@ -579,7 +564,7 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
     return ReproducedCells(trials, catalog, cells)
 
 
-def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5 | SummaryV6:
+def _recompute_summary(reproduced: ReproducedCells) -> SummaryV6:
     plan = reproduced.trials.plan
     bundle = plan.inputs.bundle
     manifest, stored_summary = bundle.manifest, bundle.stored_summary
@@ -598,10 +583,7 @@ def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5 | SummaryV6:
         run_purpose=manifest.run_purpose,
         samples_per_identity=samples,
         preregistered_samples=manifest.suite.default_samples,
-        schema_version=stored_summary.schema_version,
     )
-    if manifest.execution.judge_concurrency is None:
-        raise ValueError("summary schema does not match the sealed execution generation")
     if canonical_json(recomputed.model_dump(mode="json", by_alias=True)) != canonical_json(stored_summary.model_dump(mode="json", by_alias=True)):
         raise ValueError("summary does not recompute from sealed cells")
     return recomputed

@@ -1,4 +1,4 @@
-"""Frozen typed schema-v5 summary contract."""
+"""Strict typed schema-v6 summary contract."""
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -95,7 +95,8 @@ class InterpretationSummary(SummaryModel):
     inferential_status: Literal["diagnostic-only", "production-descriptive"]
 
 
-class SummaryBase(SummaryModel):
+class SummaryV6(SummaryModel):
+    schema_version: Literal[6]
     analysis: AnalysisSummary
     expected_cells: int
     observed_cells: int
@@ -109,13 +110,3 @@ class SummaryBase(SummaryModel):
     measurement_scope: MeasurementScope
     interpretation: InterpretationSummary
     cells: list[SummaryCell]
-
-
-class SummaryV5(SummaryBase):
-    schema_version: Literal[5]
-
-
-class SummaryV6(SummaryBase):
-    """Schema-v6 summary: conservative compound measurements are valid evidence."""
-
-    schema_version: Literal[6]

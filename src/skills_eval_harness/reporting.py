@@ -1,4 +1,4 @@
-"""Deterministic composable rendering for schema-v5 evaluation reports."""
+"""Deterministic composable rendering for schema-v6 evaluation reports."""
 from __future__ import annotations
 
 import html
@@ -10,7 +10,7 @@ from typing import Any
 
 from .acceptance import DIMENSIONS as SCORES, MEASURES, METRICS
 from .report_models import ReportContext
-from .summary import SummaryV5
+from .summary import SummaryV6
 
 
 PRESENTATION_SCORES = (
@@ -167,7 +167,7 @@ def _provenance(context: ReportContext) -> str:
     ))
 
 
-def _acceptance(summary: SummaryV5) -> str:
+def _acceptance(summary: SummaryV6) -> str:
     acceptance = summary.acceptance
     lines = ["## Acceptance policy and result", "", f"Policy `{_escape(acceptance.policy_id)}` result: **{'PASS' if acceptance.pass_ else 'FAIL'}**.", "", "| Dimension | Score threshold | Sample pass-rate threshold |", "|---|---:|---:|"]
     for name in PRESENTATION_SCORES:
@@ -263,7 +263,7 @@ def _failures(context: ReportContext) -> str:
     return "\n".join(lines)
 
 
-def _timing(summary: SummaryV5) -> str:
+def _timing(summary: SummaryV6) -> str:
     timing = summary.timing
     lines = ["## Timing", "", f"- Available-valid summed cell-seconds: `{_fmt(timing.available_valid_summed_cell_seconds)}`."]
     if timing.common_valid_summed_cell_seconds is not None:

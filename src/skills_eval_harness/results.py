@@ -24,11 +24,7 @@ from .judge import (
 )
 
 if TYPE_CHECKING:
-    from .summary import SummaryV5, SummaryV6
-
-
-class MeasurementConfoundedError(ValueError):
-    """Legacy v2 task-phase efficiency cannot be separated from setup output."""
+    from .summary import SummaryV6
 
 
 EVIDENCE_KINDS: dict[str, EvidenceKind] = {
@@ -47,7 +43,6 @@ INVALID_REASONS = {
     "trial_exception",
     "deterministic_verifier_failed",
     "judge_validation_failed",
-    "measurement_confounded",
     "equivalent_evidence_judge_inconsistency",
 }
 
@@ -237,7 +232,6 @@ def trial_evidence(
     trial_name: str,
     *,
     include_command_evidence: bool = True,
-    conservative_confounded: bool = False,
 ) -> list[tuple[EvidenceKind, str]]:
     root = job_dir / trial_name
     trajectory = root / "agent/trajectory.json"
@@ -281,8 +275,6 @@ def trial_evidence(
             if name == "mechanical":
                 mechanical = json.loads(text)
                 if mechanical.get("measurement_confounded") is True:
-                    if not conservative_confounded:
-                        raise MeasurementConfoundedError("task efficiency measurement is confounded with setup output")
                     evidence.append((
                         "measurement",
                         json.dumps(
@@ -608,8 +600,7 @@ def summarize_cells(
     run_purpose: str = "diagnostic",
     samples_per_identity: int | None = None,
     preregistered_samples: int | None = None,
-    schema_version: Literal[5, 6] = 5,
-) -> "SummaryV5 | SummaryV6":
+) -> "SummaryV6":
     validate_equivalent_judgements(cells)
     cohort = _validate_summary_cohort(
         cells, expected_identities, expected_families=expected_families,
@@ -620,10 +611,9 @@ def summarize_cells(
     acceptance = CURRENT_ACCEPTANCE_POLICY.evaluate_groups(cohort.cells, roles=analysis.roles)
     passed = valid and acceptance["pass"]
     paired = _paired_cohort(cohort)
-    from .summary import SummaryV5, SummaryV6
-    model = SummaryV5 if schema_version == 5 else SummaryV6
-    return model.model_validate({
-        "schema_version": schema_version,
+    from .summary import SummaryV6
+    return SummaryV6.model_validate({
+        "schema_version": 6,
         "analysis": {
             "kind": analysis.kind,
             "absolute": {"arm": analysis.arms[0]} if not paired_run else None,
@@ -688,8 +678,7 @@ def write_summary(
     run_purpose: str = "diagnostic",
     samples_per_identity: int | None = None,
     preregistered_samples: int | None = None,
-    schema_version: Literal[5, 6] = 5,
-) -> "SummaryV5 | SummaryV6":
+) -> "SummaryV6":
     summary = summarize_cells(
         cells,
         expected_identities,
@@ -699,7 +688,6 @@ def write_summary(
         run_purpose=run_purpose,
         samples_per_identity=samples_per_identity,
         preregistered_samples=preregistered_samples,
-        schema_version=schema_version,
     )
     atomic_write_json(path, summary.model_dump(mode="json", by_alias=True))
     return summary

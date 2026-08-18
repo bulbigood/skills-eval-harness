@@ -86,6 +86,9 @@ def make_provenance(tmp_path: Path) -> tuple[Provenance, dict[str, Path]]:
         task_checksums={"arm/task": "c" * 64},
         image_digests={"agent": "d" * 64},
         fixture_sources={"fixture": {"repository": "https://github.com/acme/fixture", "commit": "f" * 40, "tree": "e" * 40, "payload_sha256": "a" * 64}},
+        worker_auth_mode="api-key",
+        judge_auth_mode="api-key",
+        judge_concurrency=4,
     )
     return provenance, paths
 

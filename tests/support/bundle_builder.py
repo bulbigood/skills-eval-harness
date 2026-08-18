@@ -1,4 +1,4 @@
-"""Deterministic, fully offline schema-v5 publication bundle fixtures."""
+"""Deterministic, fully offline schema-v6 publication bundle fixtures."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Literal
 
 from harbor.models.job.result import JobResult, TrialResult
 
+from skills_eval_harness.dataset import scenario_map
 from skills_eval_harness.hashing import (
     atomic_write_json,
     git_tree_sha1,
@@ -21,6 +22,7 @@ from skills_eval_harness.hashing import (
     sha256_tree,
 )
 from skills_eval_harness.judge import (
+    JUDGE_SCALE,
     JudgeVerdict,
     build_evidence,
     build_judge_messages,
@@ -133,12 +135,16 @@ execution: {{timeout_seconds: 1, global_concurrency: 1, retries: 0}}
 runtimes: {{0.18.0: {runtime_digest}}}
 skill_repositories: [https://github.com/acme/skills]
 """
-    catalog_text = """scenarios:
+    catalog_text = """schema_version: 2
+scenarios:
   - id: offline-read
     fixture: demo-fixture
     command_families: [read]
     procedure: Read the fixture fact.
     excellent: Report the fixture fact exactly.
+    postconditions:
+      - type: unchanged_except
+        values: []
 """
     suite_text = """schema_version: 1
 id: offline-suite
@@ -275,6 +281,8 @@ arms:
                 "payload_sha256": sha256_tree(inputs / "fixtures/demo"),
             }
         },
+        worker_auth_mode="api-key",
+        judge_auth_mode="api-key",
         judge_concurrency=1,
     )
     (run / "provenance.json").write_text(provenance.model_dump_json())
@@ -384,13 +392,7 @@ arms:
         },
     )
 
-    scenario = {
-        "id": "offline-read",
-        "fixture": "demo-fixture",
-        "command_families": ["read"],
-        "procedure": "Read the fixture fact.",
-        "excellent": "Report the fixture fact exactly.",
-    }
+    scenario = scenario_map(inputs / "scenario-catalog.yaml")["offline-read"]
     evidence = build_evidence(trial_evidence(run / "jobs/ordinary", trial_name))
     verdict = {
         "rationale": "All deterministic offline evidence supports the result.",
@@ -434,7 +436,7 @@ arms:
         "cost_usd": 0.01,
         "evidence": [item.model_dump(mode="json") for item in evidence],
         "judge_messages": build_judge_messages(
-            scenario=scenario, evidence=evidence, scale={"minimum": 0, "maximum": 5}
+            scenario=scenario, evidence=evidence, scale=JUDGE_SCALE
         ),
         "verdict": verdict,
     }
@@ -457,22 +459,24 @@ arms:
         run / "run-manifest.json",
         {
             "schema_version": 1,
-            "run_id": "offline-current-v5",
+            "run_id": "offline-current-v6",
             "run_purpose": "production",
             "agent": "codex",
             "agent_version": "0.147.0",
             "node_version": "22.23.2",
-            "evidence_protocol": "judge-evidence-v2",
+            "worker_auth_mode": "api-key",
+            "judge_auth_mode": "api-key",
+            "evidence_protocol": "judge-evidence-v3",
             "samples": 1,
             "suite_default_samples": 1,
             "suite": suite,
             "suite_repository_path": "evals/suites/offline.yaml",
             "datasets": {"ordinary": "datasets/ordinary"},
             "execution": {
+                "global_concurrency": 1,
                 "judge_concurrency": 1,
                 "arm_concurrency_batches": [{"ordinary": 1}],
             },
-
         },
     )
     atomic_write_json(

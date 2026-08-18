@@ -12,6 +12,7 @@ import pytest
 from skills_eval_harness.bundle import (
     BundleLayout,
     CurrentRunManifest,
+    ManifestExecution,
     SelectedSkillMetadata,
     ValidatedBundle,
     validate_run_bundle,
@@ -23,7 +24,7 @@ from skills_eval_harness.models import Agent, AnalysisPlan, HarnessConfig, Judge
 from skills_eval_harness.publish import publish
 from skills_eval_harness.provenance import Provenance, seal_run, verify_run_seal
 from skills_eval_harness.telemetry import validate_device_telemetry
-from skills_eval_harness.summary import SummaryV5
+from skills_eval_harness.summary import SummaryV6
 from support.bundle_builder import BundleBuilder
 
 
@@ -46,12 +47,18 @@ def mocked_validator(monkeypatch: pytest.MonkeyPatch) -> None:
             agent=raw_manifest["agent"],
             agent_version=raw_manifest["agent_version"],
             node_version=raw_manifest["node_version"],
+            worker_auth_mode="api-key",
+            judge_auth_mode="api-key",
+            evidence_protocol="judge-evidence-v3",
             samples=raw_manifest["samples"],
             suite_default_samples=raw_manifest["suite_default_samples"],
             run_purpose=raw_manifest["run_purpose"],
-
             datasets={"arm": "datasets/arm"},
-            execution=None,
+            execution=ManifestExecution(
+                global_concurrency=1,
+                judge_concurrency=4,
+                arm_concurrency_batches=[{"arm": 1}],
+            ),
         )
         config = HarnessConfig.model_construct(
             agents={
@@ -74,7 +81,7 @@ def mocked_validator(monkeypatch: pytest.MonkeyPatch) -> None:
             ),
             catalog={},
             cells=(),
-            summary=SummaryV5.model_validate_json(
+            summary=SummaryV6.model_validate_json(
                 (run_dir / "summary.json").read_text()
             ),
             telemetry=validate_device_telemetry(run_dir / "device-telemetry.json"),
@@ -154,6 +161,9 @@ def provenance(dirty: bool = False) -> Provenance:
                 "payload_sha256": SHA,
             }
         },
+        worker_auth_mode="api-key",
+        judge_auth_mode="api-key",
+        judge_concurrency=4,
     )
 
 
@@ -170,7 +180,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
         "https://github.com/bulbigood/skills-eval-harness.git",
     )
     summary = {
-        "schema_version": 5,
+        "schema_version": 6,
         "valid": True,
         "pass": True,
         "expected_cells": 1,
@@ -539,7 +549,7 @@ def test_publish_uses_real_bundle_validator_and_rejects_legacy_schema(
     summary["schema_version"] = 4
     (run / "summary.json").write_text(json.dumps(summary))
     seal_run(run)
-    with pytest.raises(ValueError, match="only summary schema versions 5 and 6"):
+    with pytest.raises(ValueError, match="only summary schema version 6"):
         publish(root=root, run_dir=run, output=root / "report.md")
 
 
@@ -549,7 +559,7 @@ def test_publish_validates_sealed_current_bundle_and_writes_markdown_checksum(
     root, run = build_valid_current_bundle(tmp_path)
     output = root / "reports/current.md"
 
-    assert validate_run_bundle(run, require_seal=True).summary.schema_version == 5
+    assert validate_run_bundle(run, require_seal=True).summary.schema_version == 6
     publish(root=root, run_dir=run, output=output)
 
     report = output.read_text()

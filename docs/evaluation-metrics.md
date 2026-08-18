@@ -20,7 +20,7 @@ The Harbor evaluator uses seven `0..5` dimensions:
 
 The evaluator has no compatibility path for the former TOML configuration or host subprocess runner.
 
-Summary schema v5 is the sole report and validation contract. Schema v3 and v4 summaries are rejected without compatibility conversion or historical rendering.
+Summary schema v6 is the sole report and validation contract. Every other summary version is rejected without compatibility conversion or historical rendering.
 
 ## Deterministic verification
 

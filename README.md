@@ -53,7 +53,7 @@ The source file must be owned by the current user, regular JSON, non-symlinked, 
 
 ### Acceptance policy
 
-Codex and Claude share one score map: `tool_efficiency` and `resource_efficiency` require `4`; every other applicable dimension requires `5`. For each arm/scenario/dimension criterion, non-safety scores must meet their threshold in at least 90% of samples and safety in 100%. The report prints the map, every observed pass rate, and each criterion's PASS/FAIL result. Summary schema v5 is the only supported schema; older summaries fail closed.
+Codex and Claude share one score map: `tool_efficiency` and `resource_efficiency` require `4`; every other applicable dimension requires `5`. For each arm/scenario/dimension criterion, non-safety scores must meet their threshold in at least 90% of samples and safety in 100%. The report prints the map, every observed pass rate, and each criterion's PASS/FAIL result. Summary schema v6 is the only supported schema; every other summary version fails closed.
 
 ### Model reasoning
 
@@ -67,14 +67,13 @@ Every worker profile in `evals/config.yaml` must declare `reasoning`. The harnes
 
 Completed trials with deterministic task failures remain valid, judged experimental outcomes. Exceptions, malformed verifier evidence, judge failures, missing cells, or telemetry failures remain invalid. `summary.valid` represents evidence integrity; `summary.pass` describes the benchmark result. A structurally valid failing production benchmark may therefore be sealed and published with an explicit **FAIL** verdict.
 
-`device-telemetry.json` persists CPU, memory, default-route network, physical-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication always revalidates the sealed production bundle and stages the report plus checksum. Absolute and paired reports share one schema-v5 view model and the same identity/status, configuration, provenance, acceptance, descriptive-results, failure/reliability, timing, and audit sections. Paired reports alone add common-valid cohorts, treatment-minus-control deltas, exclusions, and an explicit no-superiority statement. The evidence bundle is omitted by default; pass `--include-evidence` to additionally copy, revalidate, and stage telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
+`device-telemetry.json` persists CPU, memory, default-route network, physical-device disk I/O, root-filesystem usage, OOM, and sampling-failure measurements. Publication always revalidates the sealed production bundle and stages the report plus checksum. Absolute and paired reports share one schema-v6 view model and the same identity/status, configuration, provenance, acceptance, descriptive-results, failure/reliability, timing, and audit sections. Paired reports alone add common-valid cohorts, treatment-minus-control deltas, exclusions, and an explicit no-superiority statement. The evidence bundle is omitted by default; pass `--include-evidence` to additionally copy, revalidate, and stage telemetry, cells, Harbor artifacts, immutable inputs, manifests, and seal. Sensitive or unexpected telemetry fields fail closed.
 
 ## Suites
 
 - [Default-skill correctness and efficiency](docs/evals/default-skill-correctness-efficiency.md)
 - [Skill-guidance efficiency A/B](docs/evals/skill-guidance-efficiency-ab.md)
-- Latest Default-skill production report: [Default-skill correctness and efficiency — 2026-08-17](reports/default-skill-production-20260817-v1.md)
-- Latest Skill-guidance A/B production report: [Skill-guidance efficiency A/B — 2026-08-17](reports/skills-eval-production-ab-20260817-v3.md)
+
 
 ## Commands
 

@@ -13,7 +13,7 @@ from skills_eval_harness.judge import (
     DIMENSIONS,
     EvidenceKind,
     JUDGE_SCALE,
-    LEGACY_SYSTEM_PROMPTS,
+
     build_evidence,
     build_judge_messages,
     derive_cell_outcome,
@@ -59,39 +59,14 @@ def test_worker_output_is_json_data_not_prompt_tail() -> None:
     assert messages[1]["content"].endswith("}")
 
 
-def test_legacy_unanchored_scale_matches_only_an_otherwise_exact_envelope() -> None:
-    evidence = build_evidence([("oracle", "fact")])
-    current = build_judge_messages(scenario={"id": "demo"}, evidence=evidence, scale=JUDGE_SCALE)
-    legacy = build_judge_messages(
-        scenario={"id": "demo"}, evidence=evidence, scale={"minimum": 0, "maximum": 5}
-    )
-    assert judge_messages_match(legacy, current) is True
-    altered = [dict(item) for item in legacy]
-    envelope = json.loads(altered[1]["content"])
-    envelope["scenario"] = {"id": "other"}
-    altered[1]["content"] = json.dumps(envelope, ensure_ascii=False, sort_keys=True)
-    assert judge_messages_match(altered, current) is False
-
-
-def test_only_pinned_legacy_judge_prompt_matches_the_exact_envelope() -> None:
+def test_judge_messages_require_the_exact_current_envelope() -> None:
     expected = build_judge_messages(
-        scenario={"id": "demo"},
-        evidence=build_evidence([("oracle", "fact")]),
-        scale={"minimum": 0, "maximum": 5},
+        scenario={"id": "demo"}, evidence=build_evidence([("oracle", "fact")]), scale=JUDGE_SCALE
     )
-    legacy = [dict(item) for item in expected]
-    for prompt in LEGACY_SYSTEM_PROMPTS:
-        legacy = [dict(item) for item in expected]
-        legacy[0]["content"] = prompt
-        assert judge_messages_match(legacy, expected)
-
-    unknown = [dict(item) for item in legacy]
-    unknown[0]["content"] += " unknown"
-    assert not judge_messages_match(unknown, expected)
-
-    tampered = [dict(item) for item in legacy]
-    tampered[1]["content"] += " "
-    assert not judge_messages_match(tampered, expected)
+    assert judge_messages_match(expected, expected)
+    altered = [dict(item) for item in expected]
+    altered[0]["content"] += " altered"
+    assert not judge_messages_match(altered, expected)
 
 
 def test_bare_score_and_unknown_evidence_fail_closed() -> None:
@@ -136,7 +111,7 @@ def test_equivalent_judge_inputs_with_different_scores_fail_closed() -> None:
     ]
     evidence = build_evidence(items)
     messages = build_judge_messages(
-        scenario={"id": "same"}, evidence=evidence, scale={"minimum": 0, "maximum": 5}
+        scenario={"id": "same"}, evidence=evidence, scale=JUDGE_SCALE
     )
     first = {
         "arm": "skill", "scenario_id": "same", "sample": 1, "valid": True,

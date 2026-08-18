@@ -280,7 +280,7 @@ def test_nonempty_failure_ledger_distinguishes_failure_invalid_missing_and_exclu
 
 @pytest.mark.parametrize("kind", ["absolute", "paired"])
 def test_canonical_report_matches_complete_golden_bytes(kind: str) -> None:
-    golden = Path(__file__).parent / "golden" / f"schema-v5-{kind}.md"
+    golden = Path(__file__).parent / "golden" / f"schema-v6-{kind}.md"
     rendered = render_report(context(kind)).encode()
     if os.environ.get("UPDATE_REPORT_GOLDENS") == "1":
         golden.parent.mkdir(exist_ok=True)

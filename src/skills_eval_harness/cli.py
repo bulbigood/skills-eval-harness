@@ -288,8 +288,8 @@ def prepare(args: argparse.Namespace) -> Path:
             for name, value in fixture_sources.items()
         },
         agents_template_sha256=sha256_bytes(agents_template) if agents_template is not None else None,
-        worker_auth_mode=getattr(args, "codex_auth", "api-key"),
-        judge_auth_mode=getattr(args, "judge_auth", "api-key"),
+        worker_auth_mode=args.codex_auth,
+        judge_auth_mode=args.judge_auth,
         judge_concurrency=judge_concurrency,
     )
     manifest = {
@@ -300,8 +300,8 @@ def prepare(args: argparse.Namespace) -> Path:
         "agent": args.agent,
         "agent_version": profile.version,
         "node_version": config.container.node_version,
-        "worker_auth_mode": getattr(args, "codex_auth", "api-key"),
-        "judge_auth_mode": getattr(args, "judge_auth", "api-key"),
+        "worker_auth_mode": args.codex_auth,
+        "judge_auth_mode": args.judge_auth,
         "evidence_protocol": "judge-evidence-v3",
         "samples": args.samples,
         "suite_default_samples": load_suite(suite_path).default_samples,
@@ -624,7 +624,7 @@ def _execute_run(
                 return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
                 evidence = build_evidence(
-                    trial_evidence(job_dir, trial.trial_name, conservative_confounded=True)
+                    trial_evidence(job_dir, trial.trial_name)
                 )
                 judge_messages = build_judge_messages(
                     scenario=catalog[scenario_id], evidence=evidence, scale=JUDGE_SCALE
@@ -714,7 +714,6 @@ def _execute_run(
             run_purpose=manifest["run_purpose"],
             samples_per_identity=manifest["samples"],
             preregistered_samples=manifest["suite"]["default_samples"],
-            schema_version=6,
         )
         for canonical_cell in summary.cells:
             payload = canonical_cell.model_dump(mode="json", by_alias=True)
