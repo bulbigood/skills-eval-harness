@@ -51,6 +51,16 @@ def test_unknown_assertion_and_path_escape_fail_closed(tmp_path: Path) -> None:
         evaluate_postconditions(root=tmp_path, before_rows=[], response="", specs=[{"type": "path_exists", "path": "/etc/passwd"}])
 
 
+def test_generic_postcondition_engine_rejects_procedural_attestations(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown postcondition type"):
+        evaluate_postconditions(
+            root=tmp_path,
+            before_rows=[],
+            response="",
+            specs=[{"type": "targeted_fallback_read", "path": "graph/note.md"}],
+        )
+
+
 def test_python_unittest_does_not_require_a_path(tmp_path: Path) -> None:
     (tmp_path / "test_ok.py").write_text("import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")
     assert evaluate_postconditions(

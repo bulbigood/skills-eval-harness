@@ -8,14 +8,28 @@ import subprocess
 from pathlib import Path
 from typing import Any, cast
 
-ALLOWED_ASSERTIONS = frozenset({
-    "response_contains_all", "response_contains_ordered", "response_excludes_all", "response_matches_all",
-    "path_exists", "path_absent", "file_text_exact",
-    "file_contains_all", "file_excludes_all", "glob_count",
-    "frontmatter_equals", "frontmatter_absent", "text_count",
-    "unchanged_except", "python_unittest", "extracted_section",
- "targeted_fallback_read",
- })
+EXECUTABLE_ASSERTIONS = frozenset(
+    {
+        "response_contains_all",
+        "response_contains_ordered",
+        "response_excludes_all",
+        "response_matches_all",
+        "path_exists",
+        "path_absent",
+        "file_text_exact",
+        "file_contains_all",
+        "file_excludes_all",
+        "glob_count",
+        "frontmatter_equals",
+        "frontmatter_absent",
+        "text_count",
+        "unchanged_except",
+        "python_unittest",
+        "extracted_section",
+    }
+)
+PROCEDURAL_ASSERTIONS = frozenset({"targeted_fallback_read"})
+CATALOG_ASSERTIONS = EXECUTABLE_ASSERTIONS | PROCEDURAL_ASSERTIONS
 
 
 def _safe_path(root: Path, relative: str) -> Path:
@@ -66,7 +80,7 @@ def _after_manifest(root: Path) -> dict[str, str]:
 
 def _assertion_failure(root: Path, before: dict[str, str], response: str, spec: dict[str, Any]) -> str | None:
     kind = spec.get("type")
-    if kind not in ALLOWED_ASSERTIONS:
+    if kind not in EXECUTABLE_ASSERTIONS:
         raise ValueError(f"unknown postcondition type: {kind!r}")
     values = spec.get("values", [])
     path = spec.get("path")

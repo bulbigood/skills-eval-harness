@@ -13,7 +13,7 @@ from harbor.models.task.config import TaskConfig
 
 from .hashing import atomic_write, canonical_json, sha256_file, sha256_tree
 from .models import HarnessConfig, Suite, load_yaml
-from .postconditions import ALLOWED_ASSERTIONS
+from .postconditions import CATALOG_ASSERTIONS
 
 POSTCONDITIONS_SOURCE = Path(__file__).with_name("postconditions.py")
 ATTESTATIONS_SOURCE = Path(__file__).with_name("attestations.py")
@@ -113,6 +113,7 @@ for spec in attestation_specs:
     attestation=fallback_attestation(document,spec["path"])
     attestations.append(attestation)
     if not attestation["runtime_attempt_observed"]: failures.append("fallback runtime attempt not observed exactly once")
+    if not attestation["runtime_unavailable_observed"]: failures.append("fallback runtime unavailable result not observed")
     if not attestation["targeted_fallback_observed"]: failures.append("exact targeted fallback read not observed")
     if attestation["unrelated_post_failure_tool_call_observed"]: failures.append("unrelated post-failure tool call observed")
 Path("/logs/verifier/fallback-attestation.json").write_text(json.dumps({"attestations":attestations},sort_keys=True,separators=(",",":")))
@@ -273,7 +274,7 @@ def scenario_map(path: Path) -> dict[str, dict]:
         if not isinstance(specs, list) or not specs:
             raise ValueError(f"scenario {scenario_id} has no deterministic postconditions")
         for spec in specs:
-            if not isinstance(spec, dict) or spec.get("type") not in ALLOWED_ASSERTIONS:
+            if not isinstance(spec, dict) or spec.get("type") not in CATALOG_ASSERTIONS:
                 raise ValueError(f"scenario {scenario_id} has an unknown postcondition")
         scenario["postconditions"] = specs
     return scenarios
