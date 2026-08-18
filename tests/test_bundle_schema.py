@@ -7,15 +7,15 @@ import pytest
 from pydantic import ValidationError
 
 from skills_eval_harness.bundle import validate_run_bundle
-from skills_eval_harness.summary import SummaryV5
+from skills_eval_harness.summary import SummaryV5, SummaryV6
 
 
-@pytest.mark.parametrize("schema", [1, 2, 3, 4, 6, 7, 8, None, "5", 5.0, True])
+@pytest.mark.parametrize("schema", [1, 2, 3, 4, 7, 8, None, "5", 5.0, True])
 def test_validate_run_bundle_rejects_every_legacy_summary_schema(
     tmp_path: Path, schema: int
 ) -> None:
     (tmp_path / "summary.json").write_text(json.dumps({"schema_version": schema}))
-    with pytest.raises(ValueError, match="only summary schema version 5"):
+    with pytest.raises(ValueError, match="only summary schema versions 5 and 6"):
         validate_run_bundle(tmp_path, require_seal=False)
 
 
@@ -32,6 +32,12 @@ def test_validate_run_bundle_accepts_schema_v5_at_the_schema_gate(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "summary.json").write_text(json.dumps({"schema_version": 5}))
+    with pytest.raises(ValueError, match="device telemetry"):
+        validate_run_bundle(tmp_path, require_seal=False)
+
+
+def test_validate_run_bundle_accepts_schema_v6_at_the_schema_gate(tmp_path: Path) -> None:
+    (tmp_path / "summary.json").write_text(json.dumps({"schema_version": 6}))
     with pytest.raises(ValueError, match="device telemetry"):
         validate_run_bundle(tmp_path, require_seal=False)
 
@@ -104,6 +110,12 @@ def test_summary_v5_is_independent_of_dictionary_insertion_order() -> None:
         SummaryV5.model_validate(payload).model_dump_json()
         == SummaryV5.model_validate(reversed_payload).model_dump_json()
     )
+
+
+def test_summary_v6_uses_the_same_strict_shape() -> None:
+    payload = _summary_payload()
+    payload["schema_version"] = 6
+    assert SummaryV6.model_validate(payload).schema_version == 6
 
 
 @pytest.mark.parametrize(

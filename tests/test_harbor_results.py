@@ -18,7 +18,7 @@ from skills_eval_harness.results import (
     trial_evidence,
     trial_scenario_outcome,
 )
-from skills_eval_harness.summary import SummaryV5
+from skills_eval_harness.summary import SummaryV5, SummaryV6
 
 
 def summarize_cells(cells: list[dict], identities: set[tuple[str, str, int]], **kwargs: Any) -> SummaryV5:
@@ -234,7 +234,7 @@ def test_command_evidence_rejects_non_whitespace_control_characters(tmp_path: Pa
         trial_evidence(tmp_path, "trial")
 
 
-def test_trial_evidence_rejects_confounded_setup_measurement(tmp_path: Path) -> None:
+def test_trial_evidence_accounts_for_confounded_setup_conservatively(tmp_path: Path) -> None:
     trial = tmp_path / "trial"
     (trial / "agent").mkdir(parents=True)
     (trial / "verifier").mkdir()
@@ -245,8 +245,21 @@ def test_trial_evidence_rejects_confounded_setup_measurement(tmp_path: Path) -> 
         json.dumps({"measurement_confounded": True})
     )
 
+    evidence = trial_evidence(tmp_path, "trial", conservative_confounded=True)
+    measurement = next(text for kind, text in evidence if kind == "measurement")
+    assert json.loads(measurement) == {
+        "measurement_reason": "compound_setup_task",
+        "measurement_status": "conservative_total",
+    }
     with pytest.raises(ValueError, match="confounded with setup output"):
         trial_evidence(tmp_path, "trial")
+
+
+def test_summary_schema_v6_is_explicit_and_v5_remains_default() -> None:
+    cells = [valid_cell("skill", 1)]
+    identities = {("skill", "one", 1)}
+    assert isinstance(summarize_cells(cells, identities), SummaryV5)
+    assert isinstance(summarize_cells(cells, identities, schema_version=6), SummaryV6)
 
 
 def test_cell_schema_rejects_coercion_out_of_range_scores_and_boolean_metrics() -> None:

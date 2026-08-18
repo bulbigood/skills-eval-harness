@@ -95,8 +95,7 @@ class InterpretationSummary(SummaryModel):
     inferential_status: Literal["diagnostic-only", "production-descriptive"]
 
 
-class SummaryV5(SummaryModel):
-    schema_version: Literal[5]
+class SummaryBase(SummaryModel):
     analysis: AnalysisSummary
     expected_cells: int
     observed_cells: int
@@ -110,3 +109,13 @@ class SummaryV5(SummaryModel):
     measurement_scope: MeasurementScope
     interpretation: InterpretationSummary
     cells: list[SummaryCell]
+
+
+class SummaryV5(SummaryBase):
+    schema_version: Literal[5]
+
+
+class SummaryV6(SummaryBase):
+    """Schema-v6 summary: conservative compound measurements are valid evidence."""
+
+    schema_version: Literal[6]

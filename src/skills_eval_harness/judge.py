@@ -27,7 +27,9 @@ JUDGE_SCALE = {
 }
 LEGACY_JUDGE_SCALE = {"minimum": 0, "maximum": 5}
 
-EvidenceKind = Literal["oracle", "telemetry", "command", "workspace", "response", "infrastructure"]
+EvidenceKind = Literal[
+    "oracle", "telemetry", "command", "workspace", "response", "infrastructure", "measurement"
+]
 
 class Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)

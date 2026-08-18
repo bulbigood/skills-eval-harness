@@ -539,7 +539,7 @@ def test_publish_uses_real_bundle_validator_and_rejects_legacy_schema(
     summary["schema_version"] = 4
     (run / "summary.json").write_text(json.dumps(summary))
     seal_run(run)
-    with pytest.raises(ValueError, match="only summary schema version 5"):
+    with pytest.raises(ValueError, match="only summary schema versions 5 and 6"):
         publish(root=root, run_dir=run, output=root / "report.md")
 
 

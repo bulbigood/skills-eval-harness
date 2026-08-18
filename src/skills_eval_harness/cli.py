@@ -51,7 +51,6 @@ from .security import (
 )
 from .source import materialize_git_identity, resolve_skill, verify_runtime, write_git_commit_object
 from .results import (
-    MeasurementConfoundedError,
     normalized_judge_input,
     trial_evidence,
     trial_scenario_outcome,
@@ -303,7 +302,7 @@ def prepare(args: argparse.Namespace) -> Path:
         "node_version": config.container.node_version,
         "worker_auth_mode": getattr(args, "codex_auth", "api-key"),
         "judge_auth_mode": getattr(args, "judge_auth", "api-key"),
-        "evidence_protocol": "judge-evidence-v2",
+        "evidence_protocol": "judge-evidence-v3",
         "samples": args.samples,
         "suite_default_samples": load_suite(suite_path).default_samples,
         "run_purpose": getattr(args, "run_purpose", "diagnostic"),
@@ -624,7 +623,9 @@ def _execute_run(
             except (OSError, ValueError, json.JSONDecodeError):
                 return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
-                evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
+                evidence = build_evidence(
+                    trial_evidence(job_dir, trial.trial_name, conservative_confounded=True)
+                )
                 judge_messages = build_judge_messages(
                     scenario=catalog[scenario_id], evidence=evidence, scale=JUDGE_SCALE
                 )
@@ -647,8 +648,6 @@ def _execute_run(
                     if equivalence_key is not None
                     else invoke_judge()
                 )
-            except MeasurementConfoundedError:
-                return arm, scenario_id, sample, None, "measurement_confounded"
             except Exception:
                 return arm, scenario_id, sample, None, "judge_validation_failed"
             scores, passed, required = derive_cell_outcome(
@@ -715,6 +714,7 @@ def _execute_run(
             run_purpose=manifest["run_purpose"],
             samples_per_identity=manifest["samples"],
             preregistered_samples=manifest["suite"]["default_samples"],
+            schema_version=6,
         )
         for canonical_cell in summary.cells:
             payload = canonical_cell.model_dump(mode="json", by_alias=True)

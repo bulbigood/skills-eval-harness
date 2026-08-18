@@ -33,7 +33,7 @@ from .results import (
     validate_equivalent_judgements,
     validate_job,
 )
-from .summary import SummaryV5
+from .summary import SummaryV5, SummaryV6
 from .telemetry import DeviceTelemetry, validate_device_telemetry
 
 
@@ -82,7 +82,7 @@ class CurrentRunManifest(StrictModel):
     node_version: str
     worker_auth_mode: str = "api-key"
     judge_auth_mode: str = "api-key"
-    evidence_protocol: Literal["judge-evidence-v1", "judge-evidence-v2"] = "judge-evidence-v1"
+    evidence_protocol: Literal["judge-evidence-v1", "judge-evidence-v2", "judge-evidence-v3"] = "judge-evidence-v1"
     samples: int
     suite_default_samples: int
     run_purpose: Literal["diagnostic", "production"]
@@ -105,7 +105,7 @@ class ValidatedBundle:
     analysis: AnalysisPlan
     catalog: Mapping[str, Mapping[str, Any]]
     cells: tuple[CellRecord, ...]
-    summary: SummaryV5
+    summary: SummaryV5 | SummaryV6
     telemetry: DeviceTelemetry
     skill: SelectedSkillMetadata
 
@@ -113,7 +113,7 @@ class ValidatedBundle:
 @dataclass(frozen=True)
 class BundleInputs:
     layout: BundleLayout
-    stored_summary: SummaryV5
+    stored_summary: SummaryV5 | SummaryV6
     manifest: CurrentRunManifest
     provenance: Provenance
     telemetry: DeviceTelemetry
@@ -192,11 +192,15 @@ def _load_bundle_inputs(run_dir: Path, *, require_seal: bool) -> BundleInputs:
     if require_seal:
         verify_run_seal(run_dir)
     stored_summary_raw = _load_json(layout.summary)
-    if type(stored_summary_raw.get("schema_version")) is not int or stored_summary_raw["schema_version"] != 5:
-        raise ValueError("only summary schema version 5 is supported")
+    schema_version = stored_summary_raw.get("schema_version")
+    if type(schema_version) is not int or schema_version not in {5, 6}:
+        raise ValueError("only summary schema versions 5 and 6 are supported")
     telemetry = validate_device_telemetry(layout.telemetry)
-    stored_summary = SummaryV5.model_validate(stored_summary_raw)
+    summary_model = SummaryV5 if schema_version == 5 else SummaryV6
+    stored_summary = summary_model.model_validate(stored_summary_raw)
     manifest = CurrentRunManifest.model_validate(_load_json(layout.manifest))
+    if (schema_version == 6) != (manifest.evidence_protocol == "judge-evidence-v3"):
+        raise ValueError("summary schema and evidence protocol are inconsistent")
     validate_run_id(manifest.run_id)
     provenance = Provenance.model_validate_json(
         (run_dir / "provenance.json").read_text(encoding="utf-8")
@@ -437,7 +441,8 @@ def _reproduce_harbor_trials(plan: VerifiedPlan) -> ReproducedTrials:
                 raw_evidence = trial_evidence(
                     job_dir,
                     trial.trial_name,
-                    include_command_evidence=manifest.evidence_protocol == "judge-evidence-v2",
+                    include_command_evidence=manifest.evidence_protocol in {"judge-evidence-v2", "judge-evidence-v3"},
+                    conservative_confounded=manifest.evidence_protocol == "judge-evidence-v3",
                 )
             except MeasurementConfoundedError:
                 deterministic_invalid_reasons[identity] = "measurement_confounded"
@@ -574,7 +579,7 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
     return ReproducedCells(trials, catalog, cells)
 
 
-def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5:
+def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5 | SummaryV6:
     plan = reproduced.trials.plan
     bundle = plan.inputs.bundle
     manifest, stored_summary = bundle.manifest, bundle.stored_summary
@@ -593,6 +598,7 @@ def _recompute_summary(reproduced: ReproducedCells) -> SummaryV5:
         run_purpose=manifest.run_purpose,
         samples_per_identity=samples,
         preregistered_samples=manifest.suite.default_samples,
+        schema_version=stored_summary.schema_version,
     )
     if manifest.execution.judge_concurrency is None:
         raise ValueError("summary schema does not match the sealed execution generation")
