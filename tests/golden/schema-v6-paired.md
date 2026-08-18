@@ -5,7 +5,7 @@
 - Run ID: `run`
 - Publication revision: `v8`
 - Suite: `suite` (`paired`)
-- Summary schema: `5`
+- Summary schema: `6`
 - Run purpose: `production`
 - Report checksum: [`report.md.sha256`](report.md.sha256)
 - Sealed evidence: not staged with this report

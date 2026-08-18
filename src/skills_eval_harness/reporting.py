@@ -55,7 +55,8 @@ def _identity(context: ReportContext) -> str:
     return "\n".join((
         "## Report identity", "",
         f"- Run ID: `{_escape(context.identity.run_id)}`", f"- Publication revision: `{_escape(context.identity.report_revision)}`",
-        f"- Suite: `{_escape(context.identity.suite_id)}` (`{context.identity.suite_kind}`)", "- Summary schema: `5`",
+        f"- Suite: `{_escape(context.identity.suite_id)}` (`{context.identity.suite_kind}`)",
+        f"- Summary schema: `{context.summary.schema_version}`",
         f"- Run purpose: `{_escape(context.identity.run_purpose)}`",
         f"- Report checksum: [`{_escape(context.publication.checksum_name)}`]({_link(context.publication.checksum_name)})",
         f"- Sealed evidence: {evidence}",
