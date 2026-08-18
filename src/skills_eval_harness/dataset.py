@@ -112,7 +112,7 @@ attestations=[]
 for spec in attestation_specs:
     attestation=fallback_attestation(document,spec["path"])
     attestations.append(attestation)
-    if attestation.get("protocol")!="fallback-attestation-v3": failures.append("fallback attestation protocol mismatch")
+    if attestation.get("protocol")!="fallback-attestation-v4": failures.append("fallback attestation protocol mismatch")
     if not attestation["runtime_attempt_observed"]: failures.append("fallback runtime attempt not observed exactly once")
     if not attestation["runtime_unavailable_observed"]: failures.append("fallback runtime unavailable result not observed")
     if not attestation["targeted_fallback_observed"]: failures.append("exact targeted fallback read not observed")

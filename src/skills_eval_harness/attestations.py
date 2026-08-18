@@ -5,13 +5,14 @@ import ast
 import json
 import re
 import shlex
+from decimal import Decimal
 from typing import Any
 
 _CMD = re.compile(r'cmd:"((?:\\.|[^"\\])*)"')
-_UNAVAILABLE_OBSERVATION = [
-    {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
-    {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
-]
+_COMPLETION = re.compile(
+    r"Script completed\nWall time ((?:0|[1-9]\d*)(?:\.\d{1,3})?) seconds\nOutput:\n"
+)
+_UNAVAILABLE_RESULT = {"type": "input_text", "text": "iwe: unavailable in this scenario\n"}
 
 
 def _is_controlled_unavailable(observation: str | None) -> bool:
@@ -21,7 +22,15 @@ def _is_controlled_unavailable(observation: str | None) -> bool:
         parsed = ast.literal_eval(observation)
     except (SyntaxError, ValueError):
         return False
-    return parsed == _UNAVAILABLE_OBSERVATION
+    if not isinstance(parsed, list) or len(parsed) != 2 or parsed[1] != _UNAVAILABLE_RESULT:
+        return False
+    metadata = parsed[0]
+    if not isinstance(metadata, dict) or set(metadata) != {"type", "text"}:
+        return False
+    if metadata.get("type") != "input_text" or not isinstance(metadata.get("text"), str):
+        return False
+    match = _COMPLETION.fullmatch(metadata["text"])
+    return match is not None and Decimal(match.group(1)) <= Decimal(300)
 
 
 def _command_rows(document: dict[str, Any]) -> list[tuple[list[str] | None, str | None]]:
@@ -94,7 +103,7 @@ def fallback_attestation(document: dict[str, Any], target: str) -> dict[str, Any
         for index in range(len(commands))
     ) if iwe_indices else False
     return {
-        "protocol": "fallback-attestation-v3",
+        "protocol": "fallback-attestation-v4",
         "runtime_attempt_observed": len(iwe_indices) == 1,
         "runtime_unavailable_observed": unavailable,
         "targeted_fallback_observed": len(reads) == 1 and after_attempt and not unrelated,

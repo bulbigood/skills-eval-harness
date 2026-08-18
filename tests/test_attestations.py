@@ -5,10 +5,14 @@ import pytest
 from skills_eval_harness.attestations import fallback_attestation
 
 
-UNAVAILABLE = repr([
-    {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
-    {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
-])
+def unavailable_with_wall_time(value: str) -> str:
+    return repr([
+        {"type": "input_text", "text": f"Script completed\nWall time {value} seconds\nOutput:\n"},
+        {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
+    ])
+
+
+UNAVAILABLE = unavailable_with_wall_time("0.0")
 TARGET = "graph/eval-roadmap.md"
 
 
@@ -32,7 +36,7 @@ def retrieve(observation: str = UNAVAILABLE) -> dict:
 def test_fallback_attestation_accepts_only_one_scoped_read_after_failed_iwe() -> None:
     document = {"steps": [retrieve(), call("sed -n '1,80p' graph/eval-roadmap.md")]}
     assert fallback_attestation(document, TARGET) == {
-        "protocol": "fallback-attestation-v3",
+        "protocol": "fallback-attestation-v4",
         "runtime_attempt_observed": True,
         "runtime_unavailable_observed": True,
         "targeted_fallback_observed": True,
@@ -71,10 +75,9 @@ def test_fallback_attestation_requires_controlled_unavailable_observation() -> N
         "iwe: unavailable in this scenario\n",
         "Success: iwe: unavailable in this scenario\n",
         "Error: iwe: unavailable in this scenario\ncontinued",
-        repr([
-            {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
-            {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
-        ]),
+        unavailable_with_wall_time("300.001"),
+        unavailable_with_wall_time("1e2"),
+        unavailable_with_wall_time("nan"),
         repr([
             {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
             {"type": "input_text", "text": "iwe: unavailable in this scenario\n"},
@@ -89,6 +92,16 @@ def test_fallback_attestation_rejects_non_exact_unavailable_observations(observa
     )
     assert result["runtime_unavailable_observed"] is False
     assert result["targeted_fallback_observed"] is False
+
+
+@pytest.mark.parametrize("wall_time", ["0", "0.0", "0.1", "1.234", "300"])
+def test_fallback_accepts_bounded_wall_time_metadata(wall_time: str) -> None:
+    result = fallback_attestation(
+        {"steps": [retrieve(unavailable_with_wall_time(wall_time)), call("cat graph/eval-roadmap.md")]},
+        TARGET,
+    )
+    assert result["runtime_unavailable_observed"] is True
+    assert result["targeted_fallback_observed"] is True
 
 
 def test_fallback_attestation_accepts_bounded_awk_regex_alternation() -> None:
