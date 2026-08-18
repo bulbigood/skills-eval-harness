@@ -6,8 +6,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import Future
 from pathlib import Path
-from typing import Any, Callable, TypeVar, cast
+from threading import Lock
+from typing import Any, Callable, Generic, TypeVar, cast
 
 from openai import OpenAI
 
@@ -17,6 +19,30 @@ from .security import _read_private_auth
 
 
 T = TypeVar("T")
+
+
+class EquivalentJudgeCache(Generic[T]):
+    """Single-flight validated judge results keyed by normalized evidence input."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._futures: dict[bytes, Future[T]] = {}
+
+    def get_or_invoke(self, key: bytes, invoke: Callable[[], T]) -> T:
+        with self._lock:
+            future = self._futures.get(key)
+            owner = future is None
+            if future is None:
+                future = Future()
+                self._futures[key] = future
+        if owner:
+            try:
+                future.set_result(invoke())
+            except BaseException as exc:
+                future.set_exception(exc)
+                with self._lock:
+                    self._futures.pop(key, None)
+        return future.result()
 
 
 def _retry_judge(invoke: Callable[[], T], *, max_attempts: int) -> T:

@@ -285,9 +285,9 @@ def trial_evidence(
     return evidence
 
 
-def _normalized_judge_input(cell: dict) -> bytes | None:
-    messages = cell.get("judge_messages")
-    if not isinstance(messages, list) or len(messages) != 2:
+def normalized_judge_input(messages: list[dict[str, str]]) -> bytes | None:
+    """Return the canonical equivalence key for a current judge evidence envelope."""
+    if len(messages) != 2:
         raise ValueError("valid cell has malformed judge messages")
     try:
         envelope = json.loads(messages[1]["content"])
@@ -312,6 +312,13 @@ def _normalized_judge_input(cell: dict) -> bytes | None:
     if not current_mechanical_protocol:
         return None
     return json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _normalized_judge_input(cell: dict) -> bytes | None:
+    messages = cell.get("judge_messages")
+    if not isinstance(messages, list):
+        raise ValueError("valid cell has malformed judge messages")
+    return normalized_judge_input(messages)
 
 
 def validate_equivalent_judgements(cells: list[dict]) -> None:

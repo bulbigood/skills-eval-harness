@@ -35,7 +35,7 @@ from .hashing import (
     sha256_tree,
 )
 from .judge import JUDGE_SCALE, build_evidence, build_judge_messages, derive_cell_outcome
-from .judge_client import _retry_judge, judge_cell
+from .judge_client import EquivalentJudgeCache, _retry_judge, judge_cell
 from .models import AnalysisPlan, Agent, HarnessConfig, Suite, load_config, load_suite, scenario_family, validate_run_id
 from .provenance import FixtureRevision, Provenance, seal_run, verify_harbor_lock, verify_materialized
 from .publish import publish
@@ -50,7 +50,14 @@ from .security import (
     validate_codex_auth,
 )
 from .source import materialize_git_identity, resolve_skill, verify_runtime, write_git_commit_object
-from .results import MeasurementConfoundedError, trial_evidence, trial_scenario_outcome, validate_job, write_summary
+from .results import (
+    MeasurementConfoundedError,
+    normalized_judge_input,
+    trial_evidence,
+    trial_scenario_outcome,
+    validate_job,
+    write_summary,
+)
 from .telemetry import TelemetryRecorder, set_terminal_status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -602,6 +609,8 @@ def _execute_run(
             first_role = "treatment" if sample % 2 else "control"
             return scenario_id, sample, 0 if arm["role"] == first_role else 1
 
+        judge_cache = EquivalentJudgeCache()
+
         def judge_trial(item: tuple[dict, TrialResult, Path]) -> tuple[dict, str, int, dict | None, str | None]:
             arm, trial, job_dir = item
             arm_id = arm["id"]
@@ -616,15 +625,27 @@ def _execute_run(
                 return arm, scenario_id, sample, None, "harbor_or_verifier_validation_failed"
             try:
                 evidence = build_evidence(trial_evidence(job_dir, trial.trial_name))
-                verdict = _retry_judge(
-                    lambda: judge_cell(
-                        config=config,
-                        scenario=catalog[scenario_id],
-                        evidence=evidence,
-                        auth_mode=args.judge_auth,
-                        auth_json=staged_judge_auth,
-                    ),
-                    max_attempts=config.judge.max_attempts,
+                judge_messages = build_judge_messages(
+                    scenario=catalog[scenario_id], evidence=evidence, scale=JUDGE_SCALE
+                )
+                equivalence_key = normalized_judge_input(judge_messages)
+
+                def invoke_judge():
+                    return _retry_judge(
+                        lambda: judge_cell(
+                            config=config,
+                            scenario=catalog[scenario_id],
+                            evidence=evidence,
+                            auth_mode=args.judge_auth,
+                            auth_json=staged_judge_auth,
+                        ),
+                        max_attempts=config.judge.max_attempts,
+                    )
+
+                verdict = (
+                    judge_cache.get_or_invoke(equivalence_key, invoke_judge)
+                    if equivalence_key is not None
+                    else invoke_judge()
                 )
             except MeasurementConfoundedError:
                 return arm, scenario_id, sample, None, "measurement_confounded"
@@ -658,11 +679,7 @@ def _execute_run(
                 "n_output_tokens": n_output,
                 "cost_usd": cost,
                 "evidence": [evidence_item.model_dump(mode="json") for evidence_item in evidence],
-                "judge_messages": build_judge_messages(
-                    scenario=catalog[scenario_id],
-                    evidence=evidence,
-                    scale=JUDGE_SCALE,
-                ),
+                "judge_messages": judge_messages,
                 "verdict": verdict.model_dump(mode="json"),
             }
             return arm, scenario_id, sample, cell, None

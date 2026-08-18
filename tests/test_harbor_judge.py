@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 
 import pytest
 from pydantic import ValidationError
@@ -18,7 +20,7 @@ from skills_eval_harness.judge import (
     judge_messages_match,
     validate_verdict,
 )
-from skills_eval_harness.judge_client import _codex_judge_command, _reject_tool_events, _retry_judge
+from skills_eval_harness.judge_client import EquivalentJudgeCache, _codex_judge_command, _reject_tool_events, _retry_judge
 from skills_eval_harness.results import validate_equivalent_judgements
 
 
@@ -152,6 +154,31 @@ def test_equivalent_judge_inputs_with_different_scores_fail_closed() -> None:
         assert cell["valid"] is False
         assert cell["invalid_reason"] == "equivalent_evidence_judge_inconsistency"
         assert cell["scores"] == {}
+
+
+def test_equivalent_judge_cache_is_single_flight_across_concurrent_calls() -> None:
+    cache: EquivalentJudgeCache[object] = EquivalentJudgeCache()
+    calls = 0
+    lock = Lock()
+    marker = object()
+
+    def invoke() -> object:
+        nonlocal calls
+        with lock:
+            calls += 1
+        return marker
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: cache.get_or_invoke(b"same", invoke), range(8)))
+    assert results == [marker] * 8
+    assert calls == 1
+
+
+def test_equivalent_judge_cache_does_not_persist_failed_invocation() -> None:
+    cache: EquivalentJudgeCache[str] = EquivalentJudgeCache()
+    with pytest.raises(RuntimeError, match="judge failed"):
+        cache.get_or_invoke(b"same", lambda: (_ for _ in ()).throw(RuntimeError("judge failed")))
+    assert cache.get_or_invoke(b"same", lambda: "validated") == "validated"
 
 
 
