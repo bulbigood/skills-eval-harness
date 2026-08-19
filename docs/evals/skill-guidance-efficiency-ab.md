@@ -25,7 +25,6 @@ Set the machine-specific paths first. The output directory must not already exis
 
 ```bash
 export IWE_RUNTIME=/absolute/path/to/iwe
-export SEVENTEEN_CENTURIES=/absolute/path/to/seventeen-centuries
 export PKM_DEMO=/absolute/path/to/pkm-demo
 export CODEX_AUTH_JSON="$HOME/.codex-harbor/auth.json"
 export OUTPUT=/absolute/new/path/skill-guidance-ab-smoke
@@ -37,7 +36,6 @@ uv run skills-eval run \
   --skill-source https://github.com/iwe-org/skills/tree/f571d6f83dd79407ec64caf7cc3036708062e3c8/skills/iwe-v18 \
   --runtime "$IWE_RUNTIME" \
   --runtime-version 0.18.0 \
-  --fixture "seventeen-centuries=$SEVENTEEN_CENTURIES" \
   --fixture "pkm-demo=$PKM_DEMO" \
   --agent codex \
   --codex-auth chatgpt \
