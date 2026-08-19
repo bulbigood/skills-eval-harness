@@ -654,10 +654,8 @@ def _execute_run(
                 verdict,
                 role=arm["role"],
                 agent=args.agent,
+                scenario_outcome=scenario_outcome,
             )
-            if scenario_outcome == "failed":
-                passed = False
-                required = False
 
             wall_time = (trial.finished_at - trial.started_at).total_seconds() if trial.finished_at and trial.started_at else None
             n_input, n_cache, n_output, cost = trial.compute_token_cost_totals()

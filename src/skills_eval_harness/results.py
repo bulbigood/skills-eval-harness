@@ -93,8 +93,8 @@ class CellRecord(BaseModel):
         if self.valid:
             if (self.scenario_outcome == "failed") != bool(self.scenario_failures):
                 raise ValueError("scenario failures must be present exactly for failed scenario outcomes")
-            if self.scenario_outcome == "failed" and (self.pass_ or self.required_pass):
-                raise ValueError("failed scenario outcomes cannot pass")
+            if self.scenario_outcome == "failed" and self.pass_:
+                raise ValueError("failed scenario outcomes cannot pass overall")
             required = (
                 bool(self.scores)
                 and self.invalid_reason is None

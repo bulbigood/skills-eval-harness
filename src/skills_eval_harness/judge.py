@@ -135,10 +135,11 @@ def derive_cell_outcome(
     *,
     role: Literal["control", "treatment"] | None,
     agent: str,
+    scenario_outcome: Literal["passed", "failed"] = "passed",
 ) -> tuple[dict[str, float], bool, bool]:
     """Derive the only valid scores and pass flags from a validated verdict."""
     scores = {name: float(value.score) for name, value in verdict.dimensions}
     scores = CURRENT_ACCEPTANCE_POLICY.normalized_scores(scores, role)
     del agent  # Acceptance thresholds are intentionally identical for all workers.
-    passed, required = CURRENT_ACCEPTANCE_POLICY.evaluate_cell(scores, role)
+    passed, required = CURRENT_ACCEPTANCE_POLICY.evaluate_cell(scores, role, scenario_outcome)
     return scores, passed, required

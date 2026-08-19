@@ -78,7 +78,25 @@ def _after_manifest(root: Path) -> dict[str, str]:
     return rows
 
 
+def validate_catalog_assertion(spec: dict[str, Any]) -> None:
+    kind = spec.get("type")
+    if kind not in CATALOG_ASSERTIONS:
+        raise ValueError(f"unknown postcondition type: {kind!r}")
+    if kind == "response_matches_all":
+        patterns = spec.get("values")
+        if not isinstance(patterns, list) or not 1 <= len(patterns) <= 8:
+            raise ValueError("response regex patterns must contain 1..8 items")
+        if any(not isinstance(pattern, str) or not pattern or len(pattern) > 256 for pattern in patterns):
+            raise ValueError("response regex patterns must be non-empty strings of at most 256 characters")
+        try:
+            for pattern in patterns:
+                re.compile(pattern)
+        except re.error as exc:
+            raise ValueError("invalid response regex") from exc
+
+
 def _assertion_failure(root: Path, before: dict[str, str], response: str, spec: dict[str, Any]) -> str | None:
+    validate_catalog_assertion(spec)
     kind = spec.get("type")
     if kind not in EXECUTABLE_ASSERTIONS:
         raise ValueError(f"unknown postcondition type: {kind!r}")
@@ -97,14 +115,7 @@ def _assertion_failure(root: Path, before: dict[str, str], response: str, spec: 
         present = [item for item in values if item in response]
         return f"response contains forbidden {present!r}" if present else None
     if kind == "response_matches_all":
-        if not isinstance(values, list) or not 1 <= len(values) <= 8 or any(
-            not isinstance(pattern, str) or not pattern or len(pattern) > 256 for pattern in values
-        ):
-            raise ValueError("response regex patterns must be 1..8 non-empty strings of at most 256 characters")
-        try:
-            missing = [pattern for pattern in values if re.search(pattern, response) is None]
-        except re.error as exc:
-            raise ValueError("invalid response regex") from exc
+        missing = [pattern for pattern in values if re.search(pattern, response) is None]
         return f"response missing semantic patterns {missing!r}" if missing else None
     if kind == "path_exists":
         return None if _safe_path(root, bounded_path).exists() else f"path missing: {path}"

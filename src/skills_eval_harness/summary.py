@@ -22,7 +22,7 @@ class AnalysisSummary(SummaryModel):
 class AcceptanceStatus(SummaryModel):
     applicable: bool
     passed: bool
-    policy_id: str
+    policy_id: Literal["dimension-sample-rate-v2"]
 
 
 class ComparisonStatus(SummaryModel):
@@ -49,7 +49,7 @@ class AcceptanceCriterion(SummaryModel):
 
 
 class AcceptanceSummary(SummaryModel):
-    policy_id: str
+    policy_id: Literal["dimension-sample-rate-v2"]
     score_thresholds: dict[str, int]
     sample_pass_rate_thresholds: dict[str, float]
     criteria: list[AcceptanceCriterion]

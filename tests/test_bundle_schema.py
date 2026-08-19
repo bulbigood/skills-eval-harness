@@ -44,11 +44,11 @@ def _summary_payload() -> dict:
         "pass": True,
         "evaluation_status": {
             "evidence_integrity": "valid",
-            "acceptance": {"applicable": True, "passed": True, "policy_id": "policy"},
+            "acceptance": {"applicable": True, "passed": True, "policy_id": "dimension-sample-rate-v2"},
             "comparison": {"kind": "absolute", "superiority_verdict": None},
         },
         "acceptance": {
-            "policy_id": "policy",
+            "policy_id": "dimension-sample-rate-v2",
             "score_thresholds": {},
             "sample_pass_rate_thresholds": {},
             "criteria": [],

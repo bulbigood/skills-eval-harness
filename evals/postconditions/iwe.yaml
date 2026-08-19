@@ -8,6 +8,22 @@ scenarios:
   assertions:
   - type: unchanged_except
     values: []
+  - type: response_matches_all
+    values:
+    - (?i)(?<![A-Za-z0-9_-])power(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])morality(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge-019(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge-260(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])power-dynamics(?![A-Za-z0-9_-])
+  - type: response_matches_all
+    values:
+    - (?i)(?<![A-Za-z0-9_-])bge-006(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge-056(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge-190(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])bge-259(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])virtue-across-centuries(?![A-Za-z0-9_-])
+    - (?i)(?<![A-Za-z0-9_-])moral-systems(?![A-Za-z0-9_-])
 - id: apply-a-guarded-structured-block-update
   assertions:
   - type: unchanged_except

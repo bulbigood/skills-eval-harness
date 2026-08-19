@@ -9,7 +9,7 @@ from typing import Callable, cast
 import pytest
 from harbor.models.task.config import TaskConfig
 
-from skills_eval_harness.dataset import VERIFIER, _materialize_runtime, generate_dataset, scenario_map
+from skills_eval_harness.dataset import VERIFIER, _materialize_runtime, _runtime_relationships, generate_dataset, scenario_map
 from skills_eval_harness.hashing import sha256_tree
 from skills_eval_harness.models import load_config, load_suite
 
@@ -25,6 +25,41 @@ def fixture_inputs(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     (fixture / ".git").mkdir()
     (fixture / ".git/index").write_bytes(b"mutable metadata")
     return runtime, {"pkm-demo-core-read": fixture}
+
+
+def test_graph_relationship_oracle_uses_pinned_runtime_and_whitelists_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = tmp_path / "graph"
+    graph.mkdir()
+    (tmp_path / ".iwe").mkdir()
+    (tmp_path / ".iwe/config.toml").write_text('[library]\npath = "graph"\n', encoding="utf-8")
+    (graph / "anchor.md").write_text("# Anchor\n", encoding="utf-8")
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_run(command, *, cwd, **kwargs):
+        calls.append((command, cwd))
+        return type("Result", (), {"stdout": json.dumps([{
+            "key": "anchor",
+            "title": "private",
+            "content": "must not leak",
+            "references": [{"key": "target", "title": "private", "sectionPath": []}],
+            "referencedBy": [{"key": "source", "title": "private", "sectionPath": []}],
+            "includes": [],
+            "includedBy": [{"key": "parent", "title": "private", "sectionPath": []}],
+        }])})()
+
+    monkeypatch.setattr("skills_eval_harness.dataset.subprocess.run", fake_run)
+    runtime = tmp_path / "iwe"
+    assert _runtime_relationships(tmp_path, runtime, {"anchor", "unrelated"}) == {
+        "anchor": {
+            "references": ["target"],
+            "referencedBy": ["source"],
+            "includes": [],
+            "includedBy": ["parent"],
+        },
+    }
+    assert calls == [([str(runtime), "retrieve", "-k", "anchor", "-f", "json"], tmp_path)]
 
 
 def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Path) -> None:

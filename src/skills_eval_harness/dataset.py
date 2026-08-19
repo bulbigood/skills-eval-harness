@@ -6,6 +6,8 @@ import inspect
 import os
 import re
 import shutil
+import subprocess
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -13,7 +15,7 @@ from harbor.models.task.config import TaskConfig
 
 from .hashing import atomic_write, canonical_json, sha256_file, sha256_tree
 from .models import HarnessConfig, Suite, load_yaml
-from .postconditions import CATALOG_ASSERTIONS
+from .postconditions import CATALOG_ASSERTIONS, validate_catalog_assertion
 
 POSTCONDITIONS_SOURCE = Path(__file__).with_name("postconditions.py")
 ATTESTATIONS_SOURCE = Path(__file__).with_name("attestations.py")
@@ -194,7 +196,65 @@ def _tree_manifest(root: Path) -> list[dict[str, object]]:
     ]
 
 
-def _semantic_oracle(workspace: Path, scenario: dict) -> dict:
+def _runtime_relationships(
+    workspace: Path, runtime: Path, terms: set[str]
+) -> dict[str, dict[str, list[str]]]:
+    """Read exact-key relationships from the pinned IWE runtime."""
+    library = workspace
+    config = workspace / ".iwe/config.toml"
+    if config.is_file():
+        configured = tomllib.loads(config.read_text(encoding="utf-8")).get("library", {}).get("path", ".")
+        if not isinstance(configured, str):
+            raise ValueError("IWE library path must be a string")
+        candidate = (workspace / configured).resolve()
+        if not candidate.is_relative_to(workspace.resolve()):
+            raise ValueError("IWE library path escapes fixture root")
+        library = candidate
+    by_key: dict[str, list[Path]] = {}
+    for path in sorted(library.rglob("*.md"), key=lambda item: item.as_posix()):
+        by_key.setdefault(path.stem.lower(), []).append(path)
+    duplicate = sorted(key for key, paths in by_key.items() if key in terms and len(paths) != 1)
+    if duplicate:
+        raise ValueError(f"duplicate IWE keys: {duplicate}")
+    keys = sorted(terms & by_key.keys())
+    if not keys:
+        return {}
+    if len(keys) > 8:
+        raise ValueError("semantic oracle relationship query exceeds eight exact keys")
+    command = [str(runtime), "retrieve"]
+    for key in keys:
+        command.extend(("-k", key))
+    command.extend(("-f", "json"))
+    result = subprocess.run(
+        command,
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or len(rows) != len(keys):
+        raise ValueError("IWE relationship query returned an unexpected row count")
+    relationships: dict[str, dict[str, list[str]]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("key") not in keys or row["key"] in relationships:
+            raise ValueError("IWE relationship query returned an invalid key")
+        directions: dict[str, list[str]] = {}
+        for direction in ("references", "referencedBy", "includes", "includedBy"):
+            values = row.get(direction)
+            if not isinstance(values, list) or any(
+                not isinstance(value, dict) or not isinstance(value.get("key"), str) for value in values
+            ):
+                raise ValueError("IWE relationship query returned an invalid relation")
+            directions[direction] = sorted({value["key"] for value in values})
+        relationships[row["key"]] = directions
+    if set(relationships) != set(keys):
+        raise ValueError("IWE relationship query omitted an exact key")
+    return relationships
+
+
+def _semantic_oracle(workspace: Path, scenario: dict, runtime: Path) -> dict:
     terms = {
         value.lower()
         for value in re.findall(r"[A-Za-z0-9_-]{4,}", scenario["request"])
@@ -243,6 +303,7 @@ def _semantic_oracle(workspace: Path, scenario: dict) -> dict:
         "procedure": scenario["procedure"],
         "excellent": scenario["excellent"],
         "source_excerpts": excerpts,
+        "relationships": _runtime_relationships(workspace, runtime, terms),
     }
 
 def _companion_assertions(path: Path) -> dict[str, list[dict]]:
@@ -277,6 +338,7 @@ def scenario_map(path: Path) -> dict[str, dict]:
         for spec in specs:
             if not isinstance(spec, dict) or spec.get("type") not in CATALOG_ASSERTIONS:
                 raise ValueError(f"scenario {scenario_id} has an unknown postcondition")
+            validate_catalog_assertion(spec)
         scenario["postconditions"] = specs
     return scenarios
 
@@ -378,7 +440,7 @@ def generate_dataset(*, root: Path, suite: Suite, config: HarnessConfig, catalog
             )
             atomic_write(
                 task / "tests/oracle.json",
-                canonical_json(_semantic_oracle(task / "environment/payload/workspace", scenario)),
+                canonical_json(_semantic_oracle(task / "environment/payload/workspace", scenario, runtime)),
             )
             atomic_write(task / "tests/postconditions.json", canonical_json(scenario.get("postconditions", [])))
             (task / "instruction.md").write_text(f"Work offline.\n\nRequest:\n{scenario['request']}\n", encoding="utf-8")

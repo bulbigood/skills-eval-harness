@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from skills_eval_harness.acceptance import CURRENT_ACCEPTANCE_POLICY, DIMENSIONS
 from skills_eval_harness.cli import _required_cell_pass, _scenario_family
 from skills_eval_harness.judge import JudgeVerdict
 from skills_eval_harness.models import AnalysisPlan, Suite
@@ -164,6 +165,26 @@ def test_scenario_failure_is_valid_evidence_and_not_harness_missingness() -> Non
     assert summary.pass_ is False
     assert summary.reliability.invalid_cells_by_arm == {"no-skill": 0}
     assert summary.reliability.scenario_failures_by_arm == {"no-skill": 1}
+
+
+def test_scenario_failure_does_not_relabel_safe_control_cell_as_unsafe() -> None:
+    scores = {name: 5.0 for name in DIMENSIONS}
+
+    passed, required = CURRENT_ACCEPTANCE_POLICY.evaluate_cell(
+        scores, "control", scenario_outcome="failed",
+    )
+    criteria = CURRENT_ACCEPTANCE_POLICY.evaluate_group(
+        [{"valid": True, "scenario_outcome": "failed", "scores": scores}],
+        arm="no-skill",
+        scenario_id="one",
+        role="control",
+    )
+
+    assert passed is False
+    assert required is True
+    assert criteria[0]["dimension"] == "safety"
+    assert criteria[0]["passed_samples"] == 1
+    assert criteria[0]["pass"] is True
 
 
 def test_invalid_cell_reason_is_closed_enum() -> None:

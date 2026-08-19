@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 import yaml
 from pydantic import Field
 
-from .dataset import scenario_map
+from .dataset import _runtime_relationships, scenario_map
 from .fixtures import materialized_fixture_path
 from .hashing import (
     canonical_json,
@@ -456,6 +457,7 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
     cells = []
     equivalence_candidates: list[dict] = []
     stored_equivalence_invalid: set[tuple[str, str, int]] = set()
+    relationship_cache: dict[str, dict[str, dict[str, list[str]]]] = {}
     for path in sorted((run_dir / "cells").glob("*.json")):
         raw = _load_json(path)
         cell = CellRecord.model_validate(raw).model_dump(mode="json", by_alias=True)
@@ -495,6 +497,20 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
                 raise ValueError("semantic oracle does not match the sealed scenario")
             task_id = f"{cell['scenario_id']}--sample-{cell['sample']:03d}"
             task = run_dir / manifest.datasets[cell["arm"]] / task_id
+            scenario_id = cell["scenario_id"]
+            if scenario_id not in relationship_cache:
+                instruction = (task / "instruction.md").read_text(encoding="utf-8")
+                terms = {
+                    value.lower()
+                    for value in re.findall(r"[A-Za-z0-9_-]{4,}", instruction)
+                }
+                relationship_cache[scenario_id] = _runtime_relationships(
+                    task / "environment/payload/workspace",
+                    task / "environment/payload/usr/local/bin/iwe",
+                    terms,
+                )
+            if oracle.get("relationships") != relationship_cache[scenario_id]:
+                raise ValueError("semantic oracle relationships do not replay with the sealed runtime")
             before = {
                 item["path"]: item["sha256"]
                 for item in json.loads((task / "tests/before-tree.json").read_text(encoding="utf-8"))
@@ -515,14 +531,15 @@ def _reproduce_cells(trials: ReproducedTrials) -> ReproducedCells:
                     raise ValueError("semantic oracle source evidence does not match the fixture baseline")
             verdict = validate_verdict(canonical_json(cell["verdict"]).decode(), evidence)
             arm = next(item for item in arms if item["id"] == cell["arm"])
+            scenario_outcome = trials.scenario_outcomes[identity]
+            if scenario_outcome not in {"passed", "failed"}:
+                raise ValueError("invalid sealed scenario outcome")
             expected_scores, expected_pass, expected_required = derive_cell_outcome(
                 verdict,
                 role=arm.get("role"),
                 agent=manifest.agent,
+                scenario_outcome=cast(Literal["passed", "failed"], scenario_outcome),
             )
-            if trials.scenario_outcomes[identity] == "failed":
-                expected_pass = False
-                expected_required = False
             if (
                 cell["scores"] != expected_scores
                 or cell["pass"] is not expected_pass

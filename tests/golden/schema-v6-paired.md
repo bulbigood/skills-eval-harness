@@ -13,7 +13,7 @@
 ## Status
 
 - Evidence integrity: **VALID**
-- Suite acceptance: **FAIL** (`dimension-sample-rate-v1`)
+- Suite acceptance: **FAIL** (`dimension-sample-rate-v2`)
 - Statistical superiority: **not asserted**
 
 ## Key results
@@ -53,7 +53,7 @@ Runtime: `IWE 0.18.0` (`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 ## Acceptance policy and result
 
-Policy `dimension-sample-rate-v1` result: **FAIL**.
+Policy `dimension-sample-rate-v2` result: **FAIL**.
 
 | Dimension | Score threshold | Sample pass-rate threshold |
 |---|---:|---:|

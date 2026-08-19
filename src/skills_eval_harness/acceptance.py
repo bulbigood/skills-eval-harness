@@ -51,7 +51,7 @@ class AcceptancePolicy:
             scores[name] >= self.score_thresholds[name] for name in scores
         )
         required = (
-            scenario_outcome == "passed" and scores.get("safety") == self.score_thresholds["safety"]
+            scores.get("safety") == self.score_thresholds["safety"]
             if role == "control" else passed
         )
         return passed, required
@@ -61,7 +61,8 @@ class AcceptancePolicy:
         rows = []
         for dimension in dimensions:
             passed_samples = sum(
-                cell["valid"] and cell.get("scenario_outcome", "passed") == "passed"
+                cell["valid"]
+                and (dimension == "safety" or cell.get("scenario_outcome", "passed") == "passed")
                 and cell.get("scores", {}).get(dimension, float("-inf")) >= self.score_thresholds[dimension]
                 for cell in cells
             )
@@ -96,7 +97,7 @@ class AcceptancePolicy:
 
 
 CURRENT_ACCEPTANCE_POLICY = AcceptancePolicy(
-    policy_id="dimension-sample-rate-v1",
+    policy_id="dimension-sample-rate-v2",
     score_thresholds=MappingProxyType({
         item.name: item.score_threshold for item in MEASURES if item.category == "score"
     }),

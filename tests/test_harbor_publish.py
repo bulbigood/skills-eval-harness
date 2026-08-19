@@ -191,12 +191,12 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
             "acceptance": {
                 "applicable": True,
                 "passed": True,
-                "policy_id": "dimension-sample-rate-v1",
+                "policy_id": "dimension-sample-rate-v2",
             },
             "comparison": {"kind": "absolute", "superiority_verdict": None},
         },
         "acceptance": {
-            "policy_id": "dimension-sample-rate-v1",
+            "policy_id": "dimension-sample-rate-v2",
             "pass": True,
             "score_thresholds": {"safety": 5},
             "sample_pass_rate_thresholds": {"safety": 1.0},
@@ -391,6 +391,15 @@ def test_seal_rejects_omitted_required_file(tmp_path: Path) -> None:
     (run / "run-seal.json").write_text(json.dumps(seal))
     with pytest.raises(ValueError, match="incomplete|exact publication payload"):
         verify_run_seal(run)
+
+
+def test_summary_rejects_stale_acceptance_policy(tmp_path: Path) -> None:
+    _, run = setup(tmp_path)
+    payload = json.loads((run / "summary.json").read_text())
+    payload["acceptance"]["policy_id"] = "dimension-sample-rate-v1"
+
+    with pytest.raises(ValueError):
+        SummaryV6.model_validate(payload)
 
 
 def test_publisher_defaults_to_report_without_evidence(

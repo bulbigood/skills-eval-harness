@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from skills_eval_harness.postconditions import evaluate_postconditions
+from skills_eval_harness.postconditions import evaluate_postconditions, validate_catalog_assertion
+
+
+def test_catalog_validation_rejects_oversized_regex_group_before_execution() -> None:
+    with pytest.raises(ValueError, match="1..8"):
+        validate_catalog_assertion({"type": "response_matches_all", "values": ["x"] * 9})
 
 
 def before(root: Path) -> list[dict[str, object]]:

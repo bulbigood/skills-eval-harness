@@ -306,6 +306,7 @@ arms:
                 "text": "the fixture fact",
             }
         ],
+        "relationships": {},
     }
     (trial_dir / "verifier/oracle.json").write_text(json.dumps(oracle, sort_keys=True))
     (trial_dir / "verifier/mechanical.json").write_text(json.dumps({"failures": []}))
