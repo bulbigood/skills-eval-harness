@@ -221,10 +221,14 @@ def _runtime_relationships(
         return {}
     if len(keys) > 8:
         raise ValueError("semantic oracle relationship query exceeds eight exact keys")
-    command = [str(runtime), "retrieve"]
+    command = [str(runtime), "find"]
     for key in keys:
-        command.extend(("-k", key))
-    command.extend(("-f", "json"))
+        command.extend(("--key", key))
+    command.extend((
+        "--limit", str(len(keys)),
+        "--add-fields", "references=$references,referencedBy=$referencedBy,includes=$includes,includedBy=$includedBy",
+        "--format", "json",
+    ))
     result = subprocess.run(
         command,
         cwd=workspace,

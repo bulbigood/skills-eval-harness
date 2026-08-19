@@ -59,7 +59,11 @@ def test_graph_relationship_oracle_uses_pinned_runtime_and_whitelists_keys(
             "includedBy": ["parent"],
         },
     }
-    assert calls == [([str(runtime), "retrieve", "-k", "anchor", "-f", "json"], tmp_path)]
+    assert calls == [([
+        str(runtime), "find", "--key", "anchor", "--limit", "1",
+        "--add-fields", "references=$references,referencedBy=$referencedBy,includes=$includes,includedBy=$includedBy",
+        "--format", "json",
+    ], tmp_path)]
 
 
 def test_generated_task_is_valid_separate_sandbox_and_pinned_image(tmp_path: Path) -> None:
