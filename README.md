@@ -76,7 +76,8 @@ Completed trials with deterministic task failures remain valid, judged experimen
 
 ## Published results
 
-- Latest: [Default-skill correctness and efficiency — 2026-08-18 v2](reports/default-skill-correctness-efficiency-20260818-v2.md) — validated evidence; preregistered acceptance **FAIL**.
+- Latest: [Skill-guidance efficiency A/B — 2026-08-19 v3](reports/skill-guidance-efficiency-ab-20260819-v3.md) — validated paired evidence; preregistered acceptance **PASS**.
+- [Default-skill correctness and efficiency — 2026-08-18 v2](reports/default-skill-correctness-efficiency-20260818-v2.md) — validated evidence; preregistered acceptance **FAIL**.
 
 
 ## Commands

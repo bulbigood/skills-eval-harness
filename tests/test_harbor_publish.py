@@ -393,6 +393,15 @@ def test_seal_rejects_omitted_required_file(tmp_path: Path) -> None:
         verify_run_seal(run)
 
 
+def test_seal_ignores_interpreter_cache_created_after_sealing(tmp_path: Path) -> None:
+    _, run = setup(tmp_path)
+    cache = run / "inputs/harness-repository/src/package/__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "module.cpython-313.pyc").write_bytes(b"generated cache")
+
+    verify_run_seal(run)
+
+
 def test_summary_rejects_stale_acceptance_policy(tmp_path: Path) -> None:
     _, run = setup(tmp_path)
     payload = json.loads((run / "summary.json").read_text())

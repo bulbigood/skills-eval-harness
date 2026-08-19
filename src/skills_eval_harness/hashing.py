@@ -52,7 +52,7 @@ def git_tree_sha1(root: Path) -> str:
     def tree(directory: Path) -> str:
         entries: list[tuple[bytes, bytes]] = []
         for path in directory.iterdir():
-            if path.name == ".git":
+            if path.name in EXCLUDED_NAMES:
                 continue
             name = path.name.encode("utf-8")
             if path.is_symlink():

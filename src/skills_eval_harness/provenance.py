@@ -234,7 +234,13 @@ def _publishable_files(run_dir: Path) -> dict[str, str]:
         "jobs/**/test-stderr.txt",
         "inputs/**/*",
     ):
-        roots.extend(sorted(path for path in run_dir.glob(pattern) if path.is_file()))
+        roots.extend(
+            sorted(
+                path
+                for path in run_dir.glob(pattern)
+                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+            )
+        )
     roots.extend(
         sorted(
             path
